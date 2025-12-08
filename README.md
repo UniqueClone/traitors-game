@@ -1,36 +1,163 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🎭 Traitors Ireland Game Night Web App
 
-## Getting Started
+A mobile‑first web application to host an in‑person version of the _Traitors Ireland_ TV show.  
+Players log in, see their role (Traitor or Faithful), view alive players with headshots, cast votes, and receive live updates for mini‑game rounds, group assignments, and locations.  
+Built for one‑evening events — lightweight, subtle, and accessible.
 
-First, run the development server:
+---
 
-```bash
+## 🚀 Features
+
+- 🔐 **Authentication**: Magic link email login (Supabase Auth).
+- 🎭 **Role Assignment**: Server‑side randomization of Traitors vs Faithful.
+- 📸 **Alive Dashboard**: Player list with headshots, updated in real‑time.
+- 🗳️ **Voting**: Faithful banish votes + secret traitor kill votes.
+- 🎲 **Mini‑Games**: Round announcements with group assignments and locations.
+- ⚡ **Realtime Updates**: Supabase Realtime subscriptions keep dashboards synced.
+
+---
+
+## 🏗️ Tech Stack
+
+- **Frontend**: Next.js + Tailwind CSS
+- **Backend/API**: Next.js API routes
+- **Database**: Supabase Postgres
+- **Auth**: Supabase magic link
+- **Realtime**: Supabase Realtime
+- **Deployment**: Vercel
+
+---
+
+## 📂 Project Structure
+
+- /pages
+- /api
+  - assignRoles.ts
+  - assignGroups.ts
+  - vote.ts
+  - triggerRound.ts
+  - state.ts
+- /components
+  - Dashboard.tsx
+  - HostPanel.tsx
+- /hooks
+  - usePlayers.ts
+  - useRounds.ts
+- /lib
+  - supabaseClient.ts
+
+---
+
+## 🗄️ Database Schema
+
+### Player
+
+- `id` (uuid, PK)
+- `name` (text)
+- `email` (unique)
+- `role` ("Traitor" | "Faithful")
+- `alive` (boolean)
+- `headshot_url` (text)
+
+### Vote
+
+- `id` (uuid, PK)
+- `voter_id` (FK → Player)
+- `target_id` (FK → Player)
+- `round` (int)
+- `type` ("banish" | "traitor-kill")
+
+### GameRound
+
+- `id` (uuid, PK)
+- `round` (int)
+- `type` (text)
+- `groups` (jsonb)
+- `location` (text)
+- `start_time` (timestamptz)
+- `triggered` (boolean)
+
+---
+
+## ⚙️ Setup
+
+1. **Clone repo**
+
+    ```bash
+    git clone https://github.com/yourname/traitors-game.git
+    cd traitors-game
+    ```
+
+Install dependencies
+
+npm install
+
+Configure environment
+
+Create .env.local:
+
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+
+Run locally
+
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Deploy
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Push to GitHub.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Deploy on Vercel.
 
-## Learn More
+Add Supabase keys in Vercel environment variables.
 
-To learn more about Next.js, take a look at the following resources:
+🎮 Usage Flow
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Host Setup
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Upload player headshots.
 
-## Deploy on Vercel
+Assign roles via Host Panel.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Create rounds with group assignments.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Player Experience
+
+Log in via email magic link.
+
+See role + alive dashboard.
+
+Receive round announcements.
+
+Cast votes discreetly.
+
+Host Control Panel
+
+Buttons: Assign Roles, Assign Groups, Trigger Round, Reveal Votes.
+
+Full visibility of state.
+
+🧩 Example Realtime Subscription
+
+const channel = supabase
+.channel("player-changes")
+.on("postgres_changes", { event: "\*", schema: "public", table: "Player" }, payload => {
+console.log("Player change:", payload);
+})
+.subscribe();
+
+📌 Notes
+
+Designed for one‑evening events — ephemeral state, reset after game.
+
+Keep traitor actions subtle (identical UI, hidden extra option).
+
+Ensure accessibility: semantic HTML, ARIA live, dark mode.
+
+🛠️ Future Enhancements
+
+Push notifications for round start.
+
+Host dashboard stats.
+
+Animated role reveals.
