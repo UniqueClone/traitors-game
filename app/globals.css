@@ -1,12 +1,21 @@
 @import 'tailwindcss';
 
-* {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
+:root {
+    --tg-bg: #120b0b;
+    --tg-surface: #1f1414;
+    --tg-surface-muted: #2a1919;
+    --tg-gold: #d4af37;
+    --tg-gold-soft: #f4e3a3;
+    --tg-red: #8b0000;
+    --tg-red-soft: #ff4b4b;
+    --tg-text: #f9f5f0;
+    --tg-text-muted: #d2c4b3;
 }
 
 body {
+    min-height: 100vh;
+    background-color: var(--tg-bg);
+    color: var(--tg-text);
     font-family:
         system-ui,
         -apple-system,
