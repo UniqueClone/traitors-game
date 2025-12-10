@@ -94,6 +94,7 @@ export default function PlayerWallPage() {
         })();
     }, [router, supabase]);
 
+    /** TODO - elimination should not be toggleable by any player; should be done automatically during specific game phases */
     const toggleEliminated = async (id: string, current: boolean) => {
         setPlayers((prev) =>
             prev.map((player) =>
