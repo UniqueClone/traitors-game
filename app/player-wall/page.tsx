@@ -2,6 +2,7 @@
 
 import Image from 'next/image';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 import { createClient } from '@/utils/supabase/client';
 
@@ -14,14 +15,69 @@ type Player = {
 
 export default function PlayerWallPage() {
     const [supabase] = useState(() => createClient());
+    const router = useRouter();
     const [players, setPlayers] = useState<Player[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [message, setMessage] = useState<string | null>(null);
 
     useEffect(() => {
         void (async () => {
             try {
+                const {
+                    data: { user },
+                    error: userError,
+                } = await supabase.auth.getUser();
+
+                if (userError) {
+                    console.error('Error loading auth user', userError);
+                }
+
+                if (!user) {
+                    router.replace('/login');
+                    return;
+                }
+
+                const { data: activeGame, error: activeGameError } =
+                    await supabase
+                        .from('games')
+                        .select('id, status')
+                        .eq('status', 'active')
+                        .maybeSingle();
+
+                if (activeGameError) {
+                    console.error('Error loading active game', activeGameError);
+                }
+
+                if (!activeGame) {
+                    setMessage('No active game is currently configured.');
+                    setPlayers([]);
+                    return;
+                }
+
+                const { data: membership, error: membershipError } =
+                    await supabase
+                        .from('players')
+                        .select('id')
+                        .eq('id', user.id)
+                        .eq('game_id', activeGame.id)
+                        .maybeSingle();
+
+                if (membershipError) {
+                    console.error('Error checking game membership', membershipError);
+                }
+
+                if (!membership) {
+                    setMessage(
+                        'You are not part of the active game. Please complete your player profile for the current game.',
+                    );
+                    setPlayers([]);
+                    return;
+                }
+
                 const { data, error: fetchError } = await supabase
                     .from('players')
                     .select('id, full_name, headshot_url, eliminated')
+                    .eq('game_id', activeGame.id)
                     .order('full_name', { ascending: true });
 
                 if (fetchError) {
@@ -32,9 +88,11 @@ export default function PlayerWallPage() {
                 setPlayers(data ?? []);
             } catch (err) {
                 console.error('Error loading players', err);
+            } finally {
+                setLoading(false);
             }
         })();
-    }, [supabase]);
+    }, [router, supabase]);
 
     const toggleEliminated = async (id: string, current: boolean) => {
         setPlayers((prev) =>
@@ -68,6 +126,28 @@ export default function PlayerWallPage() {
             alert('Error updating player: ' + updateError.message);
         }
     };
+
+    if (loading) {
+        return (
+            <main className='min-h-screen bg-(--tg-bg) px-4 py-8'>
+                <div className='text-center text-(--tg-text-muted)'>
+                    Loading players…
+                </div>
+            </main>
+        );
+    }
+
+    if (message) {
+        return (
+            <main className='min-h-screen bg-(--tg-bg) px-4 py-8'>
+                <div className='mx-auto w-full max-w-md rounded-2xl border border-[rgba(0,0,0,0.6)] bg-[radial-gradient(circle_at_10%_0%,#24140a_0,#1f1414_40%,#120b0b_100%)] p-px shadow-[0_18px_35px_rgba(0,0,0,0.8)]'>
+                    <div className='rounded-2xl bg-(--tg-surface) px-6 py-6 text-center text-(--tg-text-muted) shadow-[inset_0_0_18px_rgba(0,0,0,0.9)]'>
+                        {message}
+                    </div>
+                </div>
+            </main>
+        );
+    }
 
     return (
         <main className='min-h-screen bg-(--tg-bg) px-4 py-8'>

@@ -49,6 +49,24 @@ const NewPlayerPage = () => {
                 return;
             }
 
+            // Find the currently active game; players must belong to an active game
+            const { data: activeGame, error: activeGameError } = await supabase
+                .from('games')
+                .select('id, status')
+                .eq('status', 'active')
+                .maybeSingle();
+
+            if (activeGameError) {
+                console.error('Error loading active game', activeGameError);
+            }
+
+            if (!activeGame) {
+                alert(
+                    'No active game is currently configured. Please ask the host to start a game before completing your profile.',
+                );
+                return;
+            }
+
             // Upload headshot to Supabase Storage
             const fileExt = headshotFile.name.split('.').pop() ?? 'jpg';
             const fileName = `${user.id}-${Date.now()}.${fileExt}`;
@@ -87,6 +105,7 @@ const NewPlayerPage = () => {
                 .from('players')
                 .upsert({
                     id: user.id,
+                    game_id: activeGame.id,
                     full_name: fullName,
                     headshot_url: headshotUrl,
                     eliminated: false,

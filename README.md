@@ -8,12 +8,11 @@ Built for one‑evening events — lightweight, subtle, and accessible.
 
 ## 🚀 Features
 
-- 🔐 **Authentication**: Magic link email login (Supabase Auth).
-- 🎭 **Role Assignment**: Server‑side randomization of Traitors vs Faithful.
-- 📸 **Alive Dashboard**: Player list with headshots, updated in real‑time.
-- 🗳️ **Voting**: Faithful banish votes + secret traitor kill votes.
-- 🎲 **Mini‑Games**: Round announcements with group assignments and locations.
-- ⚡ **Realtime Updates**: Supabase Realtime subscriptions keep dashboards synced.
+- 🔐 **Authentication**: Email + password (Supabase Auth) with a new‑player profile step.
+- 🕹️ **Games**: Each event is a `game` in Supabase; players, rounds, and votes are all scoped to the active game so the app can be reused.
+- 🎭 **Role Assignment**: Traitors vs Faithful roles stored per‑player per‑game.
+- 📸 **Player Wall**: Game‑scoped player list with headshots and elimination state.
+- 🗳️ **Voting**: Per‑round voting with support for standard and traitor‑only kill rounds.
 
 ---
 
@@ -28,23 +27,20 @@ Built for one‑evening events — lightweight, subtle, and accessible.
 
 ---
 
-## 📂 Project Structure
+## 📂 Project Structure (current)
 
-- /pages
-- /api
-  - assignRoles.ts
-  - assignGroups.ts
-  - vote.ts
-  - triggerRound.ts
-  - state.ts
-- /components
-  - Dashboard.tsx
-  - HostPanel.tsx
-- /hooks
-  - usePlayers.ts
-  - useRounds.ts
-- /lib
-  - supabaseClient.ts
+- /app
+  - page.tsx – landing page
+  - login/page.tsx – login/signup
+  - login/new-player/page.tsx – profile + headshot upload
+  - player-wall/page.tsx – game‑scoped player wall
+  - voting/page.tsx – per‑round voting UI
+- /utils/supabase
+  - client.ts – browser client via `@supabase/ssr`
+  - server.ts – server client for RSC / route handlers
+  - middleware.ts – client wiring for Next.js middleware
+
+Older `/pages`/`/api` references in this README are from an earlier version and can be ignored; this app now uses the Next.js `app/` router exclusively.
 
 ---
 
