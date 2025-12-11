@@ -16,7 +16,6 @@ export default function PlayerWallPage() {
     const [players, setPlayers] = useState<WallPlayer[]>([]);
     const [loading, setLoading] = useState(true);
     const [message, setMessage] = useState<string | null>(null);
-    const [isHost, setIsHost] = useState(false);
     const [activeRound, setActiveRound] = useState<ActiveRound | null>(null);
 
     useEffect(() => {
@@ -53,7 +52,6 @@ export default function PlayerWallPage() {
                     setMessage('No active game is currently configured.');
                     setPlayers([]);
                     setActiveRound(null);
-                    setIsHost(false);
                     return;
                 }
 
@@ -78,13 +76,10 @@ export default function PlayerWallPage() {
                     );
                     setPlayers([]);
                     setActiveRound(null);
-                    setIsHost(false);
                     return;
                 }
 
                 if (!isMounted) return;
-
-                setIsHost(activeGame.host === user.id);
 
                 const { data, error: fetchError } = await supabase
                     .from('players')
@@ -134,44 +129,6 @@ export default function PlayerWallPage() {
             clearInterval(intervalId);
         };
     }, [router, supabase]);
-
-    /** TODO - elimination should not be toggleable by any player; should be done automatically during specific game phases */
-    const toggleEliminated = async (id: string, current: boolean) => {
-        if (!isHost) {
-            return;
-        }
-
-        setPlayers((prev) =>
-            prev.map((player) =>
-                player.id === id
-                    ? {
-                          ...player,
-                          eliminated: !current,
-                      }
-                    : player,
-            ),
-        );
-
-        const { error: updateError } = await supabase
-            .from('players')
-            .update({ eliminated: !current })
-            .eq('id', id);
-
-        if (updateError) {
-            // roll back optimistic update on error
-            setPlayers((prev) =>
-                prev.map((player) =>
-                    player.id === id
-                        ? {
-                              ...player,
-                              eliminated: current,
-                          }
-                        : player,
-                ),
-            );
-            alert('Error updating player: ' + updateError.message);
-        }
-    };
 
     if (loading) {
         return (
@@ -230,18 +187,9 @@ export default function PlayerWallPage() {
 
             <div className='mx-auto grid max-w-5xl grid-cols-2 gap-5 sm:grid-cols-3 md:grid-cols-4'>
                 {players.map((player) => (
-                    <button
+                    <div
                         key={player.id}
-                        type='button'
-                        disabled={!isHost}
-                        onClick={() =>
-                            toggleEliminated(player.id, player.eliminated)
-                        }
-                        className={`group relative flex aspect-3/4 flex-col items-stretch rounded-xl border-4 border-(--tg-gold) bg-(--tg-surface) p-1 shadow-lg transition ${
-                            isHost
-                                ? 'hover:-translate-y-1 hover:shadow-xl'
-                                : 'opacity-90'
-                        }`}
+                        className='relative flex aspect-3/4 flex-col items-stretch rounded-xl border-4 border-(--tg-gold) bg-(--tg-surface) p-1 shadow-lg'
                     >
                         <div
                             className={`relative h-full w-full overflow-hidden rounded-lg bg-black/40 transition duration-300 ${player.eliminated ? 'opacity-80 contrast-75 grayscale' : 'opacity-100 grayscale-0'}`}
@@ -274,7 +222,7 @@ export default function PlayerWallPage() {
                         <span className='pointer-events-none mt-2 block text-center text-sm font-semibold text-(--tg-text)'>
                             {player.full_name}
                         </span>
-                    </button>
+                    </div>
                 ))}
             </div>
         </main>
