@@ -74,13 +74,12 @@ export default function RootLayout({
                                 >
                                     Player wall
                                 </Link>
-                                {/* TODO */}
-                                {/* <Link
+                                <Link
                                     href='/host/games'
                                     className='block px-4 py-2 transition hover:bg-(--tg-surface-muted) hover:text-(--tg-gold-soft) active:bg-(--tg-red-soft) active:text-(--tg-bg)'
                                 >
                                     Host games
-                                </Link> */}
+                                </Link>
                             </div>
                         </div>
                     </nav>

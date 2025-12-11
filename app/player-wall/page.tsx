@@ -5,23 +5,24 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { createClient } from '@/utils/supabase/client';
+import { GameRound, Player, RoundStatus } from '@/utils/types';
 
-type Player = {
-    id: string;
-    full_name: string;
-    headshot_url: string;
-    eliminated: boolean;
-};
+type WallPlayer = Player & { headshot_url: string };
+type ActiveRound = Pick<GameRound, 'id' | 'round' | 'type' | 'status'>;
 
 export default function PlayerWallPage() {
     const [supabase] = useState(() => createClient());
     const router = useRouter();
-    const [players, setPlayers] = useState<Player[]>([]);
+    const [players, setPlayers] = useState<WallPlayer[]>([]);
     const [loading, setLoading] = useState(true);
     const [message, setMessage] = useState<string | null>(null);
+    const [isHost, setIsHost] = useState(false);
+    const [activeRound, setActiveRound] = useState<ActiveRound | null>(null);
 
     useEffect(() => {
-        void (async () => {
+        let isMounted = true;
+
+        const load = async () => {
             try {
                 const {
                     data: { user },
@@ -40,7 +41,7 @@ export default function PlayerWallPage() {
                 const { data: activeGame, error: activeGameError } =
                     await supabase
                         .from('games')
-                        .select('id, status')
+                        .select('id, status, host, current_round_number')
                         .eq('status', 'active')
                         .maybeSingle();
 
@@ -51,6 +52,8 @@ export default function PlayerWallPage() {
                 if (!activeGame) {
                     setMessage('No active game is currently configured.');
                     setPlayers([]);
+                    setActiveRound(null);
+                    setIsHost(false);
                     return;
                 }
 
@@ -63,7 +66,10 @@ export default function PlayerWallPage() {
                         .maybeSingle();
 
                 if (membershipError) {
-                    console.error('Error checking game membership', membershipError);
+                    console.error(
+                        'Error checking game membership',
+                        membershipError,
+                    );
                 }
 
                 if (!membership) {
@@ -71,8 +77,14 @@ export default function PlayerWallPage() {
                         'You are not part of the active game. Please complete your player profile for the current game.',
                     );
                     setPlayers([]);
+                    setActiveRound(null);
+                    setIsHost(false);
                     return;
                 }
+
+                if (!isMounted) return;
+
+                setIsHost(activeGame.host === user.id);
 
                 const { data, error: fetchError } = await supabase
                     .from('players')
@@ -85,17 +97,50 @@ export default function PlayerWallPage() {
                     return;
                 }
 
-                setPlayers(data ?? []);
+                setPlayers((data ?? []) as WallPlayer[]);
+
+                const { data: roundData, error: roundError } = await supabase
+                    .from('game_rounds')
+                    .select('id, game_id, round, type, status')
+                    .eq('game_id', activeGame.id)
+                    .eq('status', RoundStatus.Active)
+                    .maybeSingle();
+
+                if (roundError) {
+                    console.error(
+                        'Error loading active round for wall',
+                        roundError,
+                    );
+                }
+
+                setActiveRound((roundData ?? null) as ActiveRound | null);
             } catch (err) {
                 console.error('Error loading players', err);
             } finally {
-                setLoading(false);
+                if (isMounted) {
+                    setLoading(false);
+                }
             }
-        })();
+        };
+
+        void load();
+
+        const intervalId = setInterval(() => {
+            void load();
+        }, 10000);
+
+        return () => {
+            isMounted = false;
+            clearInterval(intervalId);
+        };
     }, [router, supabase]);
 
     /** TODO - elimination should not be toggleable by any player; should be done automatically during specific game phases */
     const toggleEliminated = async (id: string, current: boolean) => {
+        if (!isHost) {
+            return;
+        }
+
         setPlayers((prev) =>
             prev.map((player) =>
                 player.id === id
@@ -152,30 +197,69 @@ export default function PlayerWallPage() {
 
     return (
         <main className='min-h-screen bg-(--tg-bg) px-4 py-8'>
-            <h1 className='mb-8 text-center text-3xl font-bold text-(--tg-gold)'>
+            <h1 className='mb-2 text-center text-3xl font-bold text-(--tg-gold)'>
                 Player Wall
             </h1>
+
+            {activeRound ? (
+                <p className='mb-6 text-center text-sm text-(--tg-text-muted)'>
+                    {`Current phase: Round ${activeRound.round ?? '—'} · ${(() => {
+                        switch (activeRound.type) {
+                            case 'round_table':
+                                return 'Round table';
+                            case 'banishment_vote':
+                                return 'Banishment vote';
+                            case 'banishment_result':
+                                return 'Banishment result';
+                            case 'killing_vote':
+                                return 'Killing vote';
+                            case 'breakfast':
+                                return 'Breakfast';
+                            case 'minigame':
+                                return 'Minigame';
+                            default:
+                                return activeRound.type ?? 'Unknown';
+                        }
+                    })()}`}
+                </p>
+            ) : (
+                <p className='mb-6 text-center text-sm text-(--tg-text-muted)'>
+                    Waiting for the host to start the next phase.
+                </p>
+            )}
 
             <div className='mx-auto grid max-w-5xl grid-cols-2 gap-5 sm:grid-cols-3 md:grid-cols-4'>
                 {players.map((player) => (
                     <button
                         key={player.id}
                         type='button'
+                        disabled={!isHost}
                         onClick={() =>
                             toggleEliminated(player.id, player.eliminated)
                         }
-                        className='group relative flex aspect-3/4 flex-col items-stretch rounded-xl border-4 border-(--tg-gold) bg-(--tg-surface) p-1 shadow-lg transition hover:-translate-y-1 hover:shadow-xl'
+                        className={`group relative flex aspect-3/4 flex-col items-stretch rounded-xl border-4 border-(--tg-gold) bg-(--tg-surface) p-1 shadow-lg transition ${
+                            isHost
+                                ? 'hover:-translate-y-1 hover:shadow-xl'
+                                : 'opacity-90'
+                        }`}
                     >
                         <div
                             className={`relative h-full w-full overflow-hidden rounded-lg bg-black/40 transition duration-300 ${player.eliminated ? 'opacity-80 contrast-75 grayscale' : 'opacity-100 grayscale-0'}`}
                         >
-                            <Image
-                                src={player.headshot_url}
-                                alt={player.full_name}
-                                fill
-                                className='object-cover'
-                                sizes='(min-width: 768px) 200px, 33vw'
-                            />
+                            {player.headshot_url &&
+                            player.headshot_url.trim() !== '' ? (
+                                <Image
+                                    src={player.headshot_url}
+                                    alt={player.full_name}
+                                    fill
+                                    className='object-cover'
+                                    sizes='(min-width: 768px) 200px, 33vw'
+                                />
+                            ) : (
+                                <div className='flex h-full w-full items-center justify-center bg-(--tg-surface-muted) text-(--tg-text-muted)'>
+                                    No image
+                                </div>
+                            )}
 
                             <div
                                 className={`pointer-events-none absolute inset-0 flex items-center justify-center transition duration-300 ${player.eliminated ? 'scale-100 opacity-100' : 'scale-75 opacity-0'}`}
