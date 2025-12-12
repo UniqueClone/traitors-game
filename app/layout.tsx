@@ -26,7 +26,7 @@ export default function RootLayout({
                 />
             </head>
             <body className={traitorsFont.className}>
-                <header className='border-b border-(--tg-gold)/20 bg-(--tg-surface)/80 px-4 py-3 backdrop-blur-sm'>
+                <header className='sticky top-0 z-50 border-b border-(--tg-gold)/20 bg-(--tg-surface)/80 px-4 py-3 backdrop-blur-sm'>
                     <nav className='mx-auto flex max-w-5xl items-center justify-between gap-4'>
                         <Link
                             href='/'
