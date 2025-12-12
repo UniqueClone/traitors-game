@@ -13,7 +13,8 @@ export async function middleware(request: NextRequest) {
 
     const isProtectedRoute =
         pathname.startsWith('/login/new-player') ||
-        pathname.startsWith('/player-wall');
+        pathname.startsWith('/player-wall') ||
+        pathname.startsWith('/voting');
 
     if (!user && isProtectedRoute) {
         const redirectUrl = request.nextUrl.clone();
