@@ -14,6 +14,7 @@ const ProfilePage = () => {
     const [loading, setLoading] = useState(true);
     const [fullName, setFullName] = useState<string | null>(null);
     const [role, setRole] = useState<PlayerRole>(null);
+    const [hasShield, setHasShield] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const [revealed, setRevealed] = useState(false);
 
@@ -41,7 +42,7 @@ const ProfilePage = () => {
 
                 const { data: player, error: playerError } = await supabase
                     .from('players')
-                    .select('full_name, role')
+                    .select('full_name, role, has_shield')
                     .eq('id', user.id)
                     .maybeSingle();
 
@@ -66,6 +67,9 @@ const ProfilePage = () => {
                 if (isMounted) {
                     setFullName(player.full_name ?? null);
                     setRole((player.role as PlayerRole) ?? null);
+                    setHasShield(
+                        (player.has_shield as boolean | null) === true,
+                    );
                 }
             } catch (err) {
                 console.error('Unexpected error loading profile', err);
@@ -107,6 +111,8 @@ const ProfilePage = () => {
     }
 
     const normalizedRole = role?.toLowerCase() as PlayerRole;
+    const isTraitor = normalizedRole === 'traitor';
+    const isFaithful = normalizedRole === 'faithful';
 
     const roleLabel = (() => {
         switch (normalizedRole) {
@@ -120,8 +126,7 @@ const ProfilePage = () => {
         }
     })();
 
-    const roleAvailable =
-        normalizedRole === 'traitor' || normalizedRole === 'faithful';
+    const roleAvailable = isTraitor || isFaithful;
 
     return (
         <div className='flex min-h-screen items-center justify-center bg-(--tg-bg) px-4 py-8'>
@@ -140,7 +145,7 @@ const ProfilePage = () => {
                         </p>
 
                         {fullName ? (
-                            <p className='mb-4 text-center text-sm text-(--tg-text)'>
+                            <p className='mb-2 text-center text-sm text-(--tg-text)'>
                                 Signed in as{' '}
                                 <span className='font-semibold'>
                                     {fullName}
@@ -148,27 +153,56 @@ const ProfilePage = () => {
                             </p>
                         ) : null}
 
+                        {hasShield && (
+                            <p className='mb-4 text-center text-xs text-(--tg-text-muted)'>
+                                <span className='inline-flex items-center justify-center gap-2 font-semibold text-(--tg-gold-soft)'>
+                                    <span className='relative inline-flex h-6 w-6 items-center justify-center'>
+                                        <span className='absolute inline-flex h-full w-full animate-ping rounded-full bg-(--tg-gold-soft) opacity-60' />
+                                        <span className='relative inline-flex h-6 w-6 items-center justify-center rounded-full bg-[radial-gradient(circle_at_30%_0%,#ffffff_0,#f3e19c_30%,#d4af37_70%,#8a6b1f_100%)] shadow-[0_0_18px_rgba(212,175,55,0.9)]' />
+                                    </span>
+                                    <span>
+                                        You currently have a shield against the
+                                        next Traitor kill round.
+                                    </span>
+                                </span>
+                            </p>
+                        )}
+
                         {roleAvailable ? (
                             <button
                                 type='button'
                                 onClick={() => setRevealed((value) => !value)}
                                 className='relative flex w-full flex-col items-center justify-center overflow-hidden rounded-2xl border border-(--tg-gold)/60 bg-[radial-gradient(circle_at_10%_0%,#3b2412_0,#241414_45%,#140b0b_100%)] px-6 py-8 text-center shadow-[0_18px_35px_rgba(0,0,0,0.8)] transition hover:border-(--tg-gold) hover:shadow-[0_22px_40px_rgba(0,0,0,0.9)] active:translate-y-px active:scale-[0.99]'
                             >
+                                {revealed && (
+                                    <span
+                                        aria-hidden='true'
+                                        className={`pointer-events-none absolute inset-0 opacity-60 mix-blend-screen transition-opacity duration-1000 ${
+                                            isTraitor
+                                                ? 'bg-[radial-gradient(circle_at_50%_0%,rgba(208,63,63,0.7),transparent_60%)]'
+                                                : 'bg-[radial-gradient(circle_at_50%_0%,rgba(201,176,95,0.7),transparent_60%)]'
+                                        }`}
+                                    />
+                                )}
                                 <span className='mb-2 text-xs font-semibold tracking-[0.2em] text-(--tg-gold-soft) uppercase'>
                                     Tap to {revealed ? 'hide' : 'reveal'} your
                                     role
                                 </span>
 
                                 <span
-                                    className={`mt-1 text-3xl font-black tracking-wide transition duration-300 ${
+                                    className={`mt-1 text-3xl font-black tracking-[0.35em] transition-all duration-1000 ease-out ${
                                         revealed
-                                            ? 'scale-100 text-(--tg-gold) opacity-100'
-                                            : 'scale-95 text-(--tg-text-muted) opacity-60 blur-[2px]'
+                                            ? `blur-0 scale-110 opacity-100 ${
+                                                  isTraitor
+                                                      ? 'text-(--tg-red-soft) drop-shadow-[0_0_25px_rgba(208,63,63,0.9)]'
+                                                      : 'text-(--tg-gold) drop-shadow-[0_0_22px_rgba(201,176,95,0.85)]'
+                                              }`
+                                            : 'scale-90 text-(--tg-text-muted) opacity-30 blur-xs'
                                     }`}
                                 >
                                     {revealed
                                         ? `YOU ARE ${roleLabel.toUpperCase()}`
-                                        : 'HOLD TO REVEAL'}
+                                        : 'ROLE HIDDEN'}
                                 </span>
 
                                 {!revealed ? (

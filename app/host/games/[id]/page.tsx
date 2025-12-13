@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 
 import BackArrowIcon from '@/app/components/BackArrowIcon';
 import { createClient } from '@/utils/supabase/client';
-import { Game, GameRound, RoundStatus } from '@/utils/types';
+import { Game, GameRound, GameStatus, RoundStatus } from '@/utils/types';
 
 const GameManagePage = () => {
     const [supabase] = useState(() => createClient());
@@ -20,6 +20,15 @@ const GameManagePage = () => {
     const [game, setGame] = useState<Game | null>(null);
     const [rounds, setRounds] = useState<GameRound[]>([]);
 
+    type ShieldPlayerEntry = {
+        id: string;
+        full_name: string;
+        has_shield: boolean | null;
+    };
+
+    const [shieldPlayers, setShieldPlayers] = useState<ShieldPlayerEntry[]>([]);
+    const [showShieldManager, setShowShieldManager] = useState(false);
+
     type RoundResultEntry = {
         playerId: string;
         fullName: string;
@@ -28,9 +37,16 @@ const GameManagePage = () => {
     };
 
     const [resultsRoundId, setResultsRoundId] = useState<string | null>(null);
+    const [resultsRoundType, setResultsRoundType] = useState<string | null>(
+        null,
+    );
     const [roundResults, setRoundResults] = useState<RoundResultEntry[] | null>(
         null,
     );
+    const [endgameResults, setEndgameResults] = useState<{
+        yesCount: number;
+        noCount: number;
+    } | null>(null);
     const [resultsLoading, setResultsLoading] = useState(false);
     const [resultsError, setResultsError] = useState<string | null>(null);
 
@@ -45,6 +61,25 @@ const GameManagePage = () => {
         if (!numericRounds.length) return 1;
         return Math.max(...numericRounds) + 1;
     }, [rounds]);
+
+    const reloadShieldPlayers = useCallback(
+        async (gameIdToUse: string) => {
+            const { data, error } = await supabase
+                .from('players')
+                .select('id, full_name, has_shield')
+                .eq('game_id', gameIdToUse)
+                .order('full_name', { ascending: true });
+
+            if (error) {
+                console.error('Error loading players for shields', error);
+                setErrorMessage('Error loading players for shields.');
+                return;
+            }
+
+            setShieldPlayers((data ?? []) as ShieldPlayerEntry[]);
+        },
+        [supabase],
+    );
 
     useEffect(() => {
         void (async () => {
@@ -76,7 +111,7 @@ const GameManagePage = () => {
                 const { data: gameData, error: gameError } = await supabase
                     .from('games')
                     .select(
-                        'id, name, status, cur_round_number, created_at, host, last_revealed_round, kitchen_signal_version',
+                        'id, name, status, cur_round_number, created_at, host, last_revealed_round, kitchen_signal_version, shield_points_threshold',
                     )
                     .eq('id', gameId)
                     .maybeSingle();
@@ -118,6 +153,8 @@ const GameManagePage = () => {
                 }
 
                 setRounds((roundsData ?? []) as GameRound[]);
+
+                await reloadShieldPlayers(gameData.id as string);
             } catch (error) {
                 console.error(
                     'Unexpected error loading game manage page',
@@ -128,7 +165,7 @@ const GameManagePage = () => {
                 setLoading(false);
             }
         })();
-    }, [gameId, router, supabase]);
+    }, [gameId, reloadShieldPlayers, router, supabase]);
 
     const refreshRounds = async () => {
         if (!gameId) {
@@ -148,6 +185,75 @@ const GameManagePage = () => {
         }
 
         setRounds((data ?? []) as GameRound[]);
+    };
+
+    const handleToggleShieldHolder = async (
+        playerId: string,
+        hasShield: boolean | null,
+    ) => {
+        if (!game || !currentUserId || game.host !== currentUserId) {
+            return;
+        }
+
+        setSubmitting(true);
+        setErrorMessage(null);
+
+        try {
+            if (hasShield) {
+                const { error } = await supabase
+                    .from('players')
+                    .update({ has_shield: false })
+                    .eq('id', playerId)
+                    .eq('game_id', game.id);
+
+                if (error) {
+                    console.error('Error removing shield from player', error);
+                    setErrorMessage('Error removing shield from player.');
+                    return;
+                }
+            } else {
+                const { count, error: countError } = await supabase
+                    .from('players')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('game_id', game.id)
+                    .eq('has_shield', true);
+
+                if (countError) {
+                    console.error(
+                        'Error checking current shield holders',
+                        countError,
+                    );
+                    setErrorMessage('Error checking current shield holders.');
+                    return;
+                }
+
+                if ((count ?? 0) >= 3) {
+                    alert(
+                        'There are already three active shields. Remove one before assigning another.',
+                    );
+                    return;
+                }
+
+                const { error } = await supabase
+                    .from('players')
+                    .update({ has_shield: true })
+                    .eq('id', playerId)
+                    .eq('game_id', game.id);
+
+                if (error) {
+                    console.error('Error assigning shield to player', error);
+                    setErrorMessage('Error assigning shield to player.');
+                    return;
+                }
+            }
+
+            await reloadShieldPlayers(game.id);
+        } catch (error) {
+            console.error('Unexpected error toggling shield holder', error);
+            setErrorMessage('Unexpected error updating shield holders.');
+        } finally {
+            setSubmitting(false);
+        }
     };
 
     const endActiveRounds = async (gameIdToUse: string) => {
@@ -282,7 +388,7 @@ const GameManagePage = () => {
         }
     };
 
-    const handleCloseRound = async (roundId: string) => {
+    const handleCloseRound = async (round: GameRound) => {
         if (!game || !currentUserId || game.host !== currentUserId) {
             return;
         }
@@ -294,12 +400,33 @@ const GameManagePage = () => {
             const { error } = await supabase
                 .from('game_rounds')
                 .update({ status: RoundStatus.Ended })
-                .eq('id', roundId);
+                .eq('id', round.id);
 
             if (error) {
                 console.error('Error closing round', error);
                 setErrorMessage('Error closing round.');
                 return;
+            }
+
+            if (round.type === 'killing_vote') {
+                const { error: shieldClearError } = await supabase
+                    .from('players')
+                    .update({ has_shield: false })
+                    .eq('game_id', game.id)
+                    .eq('has_shield', true);
+
+                if (shieldClearError) {
+                    console.error(
+                        'Error clearing shields after killing vote',
+                        shieldClearError,
+                    );
+                    // Non-fatal; keep going.
+                }
+            }
+
+            if (round.type === 'endgame_vote') {
+                // Resolve the special end game vote once it is closed
+                await evaluateEndgameVote(round);
             }
 
             await refreshRounds();
@@ -309,6 +436,23 @@ const GameManagePage = () => {
         } finally {
             setSubmitting(false);
         }
+    };
+
+    const handleCloseCurrentRound = async () => {
+        if (!game || !currentUserId || game.host !== currentUserId) {
+            return;
+        }
+
+        const activeRound = rounds.find(
+            (round) => round.status === RoundStatus.Active,
+        );
+
+        if (!activeRound) {
+            setErrorMessage('There is no active round to close.');
+            return;
+        }
+
+        await handleCloseRound(activeRound);
     };
 
     const handleStartBanishmentVote = async () => {
@@ -421,10 +565,65 @@ const GameManagePage = () => {
                     groups[groupIndex]!.push(playerId);
                 });
             } else {
-                // Randomly sized groups: each player goes into a random group
-                shuffled.forEach((playerId) => {
-                    const groupIndex = Math.floor(Math.random() * groupCount);
-                    groups[groupIndex]!.push(playerId);
+                const totalPlayers = shuffled.length;
+
+                const defaultSize = Math.floor(totalPlayers / groupCount) || 1;
+                const defaultSizes = Array.from({ length: groupCount }, () =>
+                    String(defaultSize),
+                ).join(', ');
+
+                const sizesInput = window.prompt(
+                    `You have ${totalPlayers} active players. Enter ${groupCount} group sizes separated by commas (must sum to ${totalPlayers}).`,
+                    defaultSizes,
+                );
+
+                if (!sizesInput) {
+                    return;
+                }
+
+                const sizeParts = sizesInput
+                    .split(',')
+                    .map((part) => part.trim())
+                    .filter(Boolean);
+
+                if (sizeParts.length !== groupCount) {
+                    alert(
+                        `Please provide exactly ${groupCount} group sizes, separated by commas.`,
+                    );
+                    return;
+                }
+
+                const groupSizes = sizeParts.map((part) =>
+                    Number.parseInt(part, 10),
+                );
+
+                if (
+                    groupSizes.some(
+                        (size) => !Number.isFinite(size) || size < 1,
+                    )
+                ) {
+                    alert('Each group size must be a positive whole number.');
+                    return;
+                }
+
+                const totalSpecified = groupSizes.reduce(
+                    (sum, size) => sum + size,
+                    0,
+                );
+
+                if (totalSpecified !== totalPlayers) {
+                    alert(
+                        `Group sizes must add up to ${totalPlayers} (currently ${totalSpecified}).`,
+                    );
+                    return;
+                }
+
+                let cursor = 0;
+                groupSizes.forEach((size, groupIndex) => {
+                    for (let i = 0; i < size; i += 1) {
+                        groups[groupIndex]!.push(shuffled[cursor]!);
+                        cursor += 1;
+                    }
                 });
             }
 
@@ -585,6 +784,46 @@ const GameManagePage = () => {
         }
     };
 
+    const handleClearRoles = async () => {
+        if (!game || !currentUserId || game.host !== currentUserId) {
+            return;
+        }
+
+        setSubmitting(true);
+        setErrorMessage(null);
+
+        try {
+            const { error: clearError } = await supabase
+                .from('players')
+                .update({ role: null })
+                .eq('game_id', game.id);
+
+            if (clearError) {
+                console.error('Error clearing player roles', clearError);
+                setErrorMessage('Error clearing player roles.');
+                return;
+            }
+
+            const { error: gameUpdateError } = await supabase
+                .from('games')
+                .update({ roles_revealed: false })
+                .eq('id', game.id);
+
+            if (gameUpdateError) {
+                console.error(
+                    'Error resetting roles_revealed on game',
+                    gameUpdateError,
+                );
+                // Non-fatal for clearing roles.
+            }
+        } catch (error) {
+            console.error('Unexpected error clearing roles', error);
+            setErrorMessage('Unexpected error clearing roles.');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
     const handleCallEveryoneToKitchen = async () => {
         if (!game || !currentUserId || game.host !== currentUserId) {
             return;
@@ -618,6 +857,328 @@ const GameManagePage = () => {
             setErrorMessage('Unexpected error sending “go to kitchen” signal.');
         } finally {
             setSubmitting(false);
+        }
+    };
+
+    const checkGameEndOrTriggerEndgameVote = async () => {
+        if (!game || !currentUserId || game.host !== currentUserId) {
+            return;
+        }
+
+        if (game.status !== GameStatus.Active) {
+            return;
+        }
+
+        try {
+            const { data: playersData, error: playersError } = await supabase
+                .from('players')
+                .select('id, role, eliminated')
+                .eq('game_id', game.id);
+
+            if (playersError) {
+                console.error(
+                    'Error loading players for end game check',
+                    playersError,
+                );
+                setErrorMessage(
+                    'Error checking players when deciding whether to end the game.',
+                );
+                return;
+            }
+
+            const players = (playersData ?? []) as {
+                id: string;
+                role: string | null;
+                eliminated: boolean;
+            }[];
+
+            const livingPlayers = players.filter(
+                (player) => !player.eliminated,
+            );
+            const livingTotal = livingPlayers.length;
+
+            if (livingTotal === 0) {
+                return;
+            }
+
+            const totalTraitors = players.filter(
+                (player) => (player.role ?? '').toLowerCase() === 'traitor',
+            ).length;
+
+            if (totalTraitors === 0) {
+                // Roles not assigned yet or no traitors defined; do not end the game.
+                return;
+            }
+
+            const livingTraitors = livingPlayers.filter(
+                (player) => (player.role ?? '').toLowerCase() === 'traitor',
+            ).length;
+            const livingFaithful = livingPlayers.filter(
+                (player) => (player.role ?? '').toLowerCase() === 'faithful',
+            ).length;
+
+            if (livingTraitors === 0) {
+                // All traitors have been eliminated – Faithful win.
+                const { error: gameUpdateError } = await supabase
+                    .from('games')
+                    .update({ status: GameStatus.Ended })
+                    .eq('id', game.id);
+
+                if (gameUpdateError) {
+                    console.error(
+                        'Error marking game ended after all traitors eliminated',
+                        gameUpdateError,
+                    );
+                    setErrorMessage(
+                        'Error marking game ended after all traitors were eliminated.',
+                    );
+                    return;
+                }
+
+                setGame({ ...game, status: GameStatus.Ended });
+                setErrorMessage(
+                    'Game ended: all Traitors have been eliminated. Faithful win.',
+                );
+                return;
+            }
+
+            if (livingFaithful === 0) {
+                // Only traitors remain – Traitors win.
+                const { error: gameUpdateError } = await supabase
+                    .from('games')
+                    .update({ status: GameStatus.Ended })
+                    .eq('id', game.id);
+
+                if (gameUpdateError) {
+                    console.error(
+                        'Error marking game ended when only traitors remain',
+                        gameUpdateError,
+                    );
+                    setErrorMessage(
+                        'Error marking game ended when only Traitors remain.',
+                    );
+                    return;
+                }
+
+                setGame({ ...game, status: GameStatus.Ended });
+                setErrorMessage(
+                    'Game ended: only Traitors remain. Traitors win.',
+                );
+                return;
+            }
+
+            if (livingTotal <= 4) {
+                // Trigger an "end game?" vote round if none is active yet.
+                const { data: existingEndgameRound, error: roundError } =
+                    await supabase
+                        .from('game_rounds')
+                        .select('id')
+                        .eq('game_id', game.id)
+                        .eq('status', RoundStatus.Active)
+                        .eq('type', 'endgame_vote')
+                        .maybeSingle();
+
+                if (roundError) {
+                    console.error(
+                        'Error checking for existing endgame_vote round',
+                        roundError,
+                    );
+                    setErrorMessage(
+                        'Error checking for an existing end game vote round.',
+                    );
+                    return;
+                }
+
+                if (existingEndgameRound) {
+                    return;
+                }
+
+                try {
+                    await endActiveRounds(game.id);
+                } catch (error) {
+                    console.error(
+                        'Error closing active rounds before starting endgame_vote',
+                        error,
+                    );
+                    setErrorMessage(
+                        'Error closing existing rounds before starting an end game vote.',
+                    );
+                    return;
+                }
+
+                const { data: insertedRound, error: insertError } =
+                    await supabase
+                        .from('game_rounds')
+                        .insert({
+                            game_id: game.id,
+                            round: nextRoundNumber,
+                            type: 'endgame_vote',
+                            status: RoundStatus.Active,
+                        })
+                        .select('round')
+                        .single();
+
+                if (insertError || !insertedRound) {
+                    console.error(
+                        'Error starting endgame_vote round',
+                        insertError,
+                    );
+                    setErrorMessage('Error starting end game vote round.');
+                    return;
+                }
+
+                const newRoundNumber = (
+                    insertedRound as { round?: number | null }
+                ).round;
+
+                const { error: gameRoundUpdateError } = await supabase
+                    .from('games')
+                    .update({
+                        cur_round_number: newRoundNumber ?? null,
+                    })
+                    .eq('id', game.id);
+
+                if (gameRoundUpdateError) {
+                    console.error(
+                        'Error updating game cur_round_number for endgame_vote',
+                        gameRoundUpdateError,
+                    );
+                    // Non-fatal; keep going.
+                }
+
+                await refreshRounds();
+            }
+        } catch (error) {
+            console.error(
+                'Unexpected error checking end game conditions',
+                error,
+            );
+            setErrorMessage('Unexpected error checking end game conditions.');
+        }
+    };
+
+    const evaluateEndgameVote = async (round: GameRound) => {
+        if (!game || !currentUserId || game.host !== currentUserId) {
+            return;
+        }
+
+        try {
+            const { data: votesData, error: votesError } = await supabase
+                .from('endgame_votes')
+                .select('voter_id, all_traitors_found')
+                .eq('round_id', round.id);
+
+            if (votesError) {
+                console.error(
+                    'Error loading endgame_votes for round',
+                    votesError,
+                );
+                setErrorMessage('Error loading end game votes for this round.');
+                return;
+            }
+
+            const votes = (votesData ?? []) as {
+                voter_id: string;
+                all_traitors_found: boolean | null;
+            }[];
+
+            if (!votes.length) {
+                setErrorMessage(
+                    'No end game votes have been recorded yet. The game will continue.',
+                );
+                return;
+            }
+
+            let yesCount = 0;
+            let noCount = 0;
+            for (const vote of votes) {
+                if (vote.all_traitors_found) {
+                    yesCount += 1;
+                } else {
+                    noCount += 1;
+                }
+            }
+
+            if (yesCount <= noCount) {
+                // Majority did not say all traitors are found – game continues.
+                setErrorMessage(
+                    'Players voted that not all Traitors have been found. The game continues.',
+                );
+                return;
+            }
+
+            // Players voted "all Traitors are found" – verify whether that is correct.
+            const { data: playersData, error: playersError } = await supabase
+                .from('players')
+                .select('id, role, eliminated')
+                .eq('game_id', game.id);
+
+            if (playersError) {
+                console.error(
+                    'Error loading players to resolve end game vote',
+                    playersError,
+                );
+                setErrorMessage(
+                    'Error checking player roles when resolving end game vote.',
+                );
+                return;
+            }
+
+            const players = (playersData ?? []) as {
+                id: string;
+                role: string | null;
+                eliminated: boolean;
+            }[];
+
+            const totalTraitors = players.filter(
+                (player) => (player.role ?? '').toLowerCase() === 'traitor',
+            ).length;
+
+            if (totalTraitors === 0) {
+                setErrorMessage(
+                    'End game vote could not be resolved because no Traitors are defined for this game.',
+                );
+                return;
+            }
+
+            const livingTraitors = players.filter(
+                (player) =>
+                    !player.eliminated &&
+                    (player.role ?? '').toLowerCase() === 'traitor',
+            ).length;
+
+            const allTraitorsEliminated = livingTraitors === 0;
+
+            const { error: gameUpdateError } = await supabase
+                .from('games')
+                .update({ status: GameStatus.Ended })
+                .eq('id', game.id);
+
+            if (gameUpdateError) {
+                console.error(
+                    'Error marking game ended after resolving end game vote',
+                    gameUpdateError,
+                );
+                setErrorMessage(
+                    'Error marking game as ended after resolving end game vote.',
+                );
+                return;
+            }
+
+            setGame({ ...game, status: GameStatus.Ended });
+
+            if (allTraitorsEliminated) {
+                setErrorMessage(
+                    'Game ended: players correctly found all Traitors. Faithful win.',
+                );
+            } else {
+                setErrorMessage(
+                    'Game ended: players were wrong, Traitors remain. Traitors win.',
+                );
+            }
+        } catch (error) {
+            console.error('Unexpected error resolving end game vote', error);
+            setErrorMessage('Unexpected error resolving end game vote.');
         }
     };
 
@@ -716,11 +1277,54 @@ const GameManagePage = () => {
         }
 
         setResultsRoundId(round.id);
+        setResultsRoundType(round.type ?? null);
         setRoundResults(null);
+        setEndgameResults(null);
         setResultsError(null);
         setResultsLoading(true);
 
         try {
+            if (round.type === 'endgame_vote') {
+                const { data: endgameVotes, error: endgameError } =
+                    await supabase
+                        .from('endgame_votes')
+                        .select('all_traitors_found')
+                        .eq('round_id', round.id);
+
+                if (endgameError) {
+                    console.error(
+                        'Error loading endgame_votes for round',
+                        endgameError,
+                    );
+                    setResultsError(
+                        'Error loading end game votes for this round.',
+                    );
+                    return;
+                }
+
+                const votes = (endgameVotes ?? []) as {
+                    all_traitors_found: boolean | null;
+                }[];
+
+                if (!votes.length) {
+                    setEndgameResults({ yesCount: 0, noCount: 0 });
+                    return;
+                }
+
+                let yesCount = 0;
+                let noCount = 0;
+                for (const vote of votes) {
+                    if (vote.all_traitors_found) {
+                        yesCount += 1;
+                    } else {
+                        noCount += 1;
+                    }
+                }
+
+                setEndgameResults({ yesCount, noCount });
+                return;
+            }
+
             const { data: votesData, error: votesError } = await supabase
                 .from('votes')
                 .select('target_id')
@@ -818,6 +1422,10 @@ const GameManagePage = () => {
                         : entry,
                 ),
             );
+
+            // After each elimination, check whether the game should end
+            // or whether an end game vote round should be triggered.
+            await checkGameEndOrTriggerEndgameVote();
         } catch (error) {
             console.error('Unexpected error eliminating player', error);
             setResultsError('Unexpected error eliminating player.');
@@ -906,7 +1514,9 @@ const GameManagePage = () => {
                             <p className='mb-3 text-xs text-(--tg-text-muted)'>
                                 Use these buttons during the game to start or
                                 stop voting rounds, send players to the kitchen,
-                                and reveal roles.
+                                and reveal roles. When an end game vote round is
+                                closed, its final yes/no tally will appear on
+                                the players&apos; voting screen.
                             </p>
                             <div className='mb-4 flex flex-wrap gap-2'>
                                 <button
@@ -933,7 +1543,7 @@ const GameManagePage = () => {
                                     type='button'
                                     disabled={submitting}
                                     onClick={() =>
-                                        void endActiveRounds(game.id)
+                                        void handleCloseCurrentRound()
                                     }
                                     className='inline-flex items-center justify-center rounded-full border border-(--tg-red-soft) px-4 py-2 text-xs font-semibold text-(--tg-red-soft) transition hover:bg-[rgba(0,0,0,0.4)] active:translate-y-px active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60'
                                 >
@@ -948,6 +1558,14 @@ const GameManagePage = () => {
                                     className='inline-flex items-center justify-center rounded-full border border-(--tg-gold)/60 px-4 py-2 text-xs font-semibold text-(--tg-text) transition hover:bg-[rgba(0,0,0,0.4)] active:translate-y-px active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60'
                                 >
                                     Assign & reveal roles
+                                </button>
+                                <button
+                                    type='button'
+                                    disabled={submitting}
+                                    onClick={() => void handleClearRoles()}
+                                    className='inline-flex items-center justify-center rounded-full border border-(--tg-red-soft)/70 px-4 py-2 text-xs font-semibold text-(--tg-red-soft) transition hover:bg-[rgba(0,0,0,0.4)] active:translate-y-px active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60'
+                                >
+                                    Clear roles
                                 </button>
                                 <button
                                     type='button'
@@ -1044,7 +1662,7 @@ const GameManagePage = () => {
                                                     }
                                                     onClick={() =>
                                                         void handleCloseRound(
-                                                            round.id,
+                                                            round,
                                                         )
                                                     }
                                                     className='inline-flex items-center justify-center rounded-full border border-(--tg-red-soft) px-3 py-1 text-[11px] font-semibold text-(--tg-red-soft) transition hover:bg-[rgba(0,0,0,0.4)] disabled:cursor-not-allowed disabled:opacity-60'
@@ -1098,7 +1716,9 @@ const GameManagePage = () => {
                                             className='text-[11px] text-(--tg-text-muted) hover:text-(--tg-gold-soft)'
                                             onClick={() => {
                                                 setResultsRoundId(null);
+                                                setResultsRoundType(null);
                                                 setRoundResults(null);
+                                                setEndgameResults(null);
                                                 setResultsError(null);
                                             }}
                                         >
@@ -1113,6 +1733,51 @@ const GameManagePage = () => {
                                         <p className='text-(--tg-red-soft)'>
                                             {resultsError}
                                         </p>
+                                    ) : resultsRoundType === 'endgame_vote' ? (
+                                        <div>
+                                            {endgameResults &&
+                                            (endgameResults.yesCount > 0 ||
+                                                endgameResults.noCount > 0) ? (
+                                                <>
+                                                    <p className='mb-1 text-(--tg-text-muted)'>
+                                                        End game vote tallies:
+                                                    </p>
+                                                    <p>
+                                                        <span className='font-semibold text-(--tg-gold-soft)'>
+                                                            All Traitors are
+                                                            found
+                                                        </span>{' '}
+                                                        –{' '}
+                                                        {
+                                                            endgameResults.yesCount
+                                                        }{' '}
+                                                        vote
+                                                        {endgameResults.yesCount ===
+                                                        1
+                                                            ? ''
+                                                            : 's'}
+                                                    </p>
+                                                    <p>
+                                                        <span className='font-semibold text-(--tg-text)'>
+                                                            Not all Traitors are
+                                                            found
+                                                        </span>{' '}
+                                                        –{' '}
+                                                        {endgameResults.noCount}{' '}
+                                                        vote
+                                                        {endgameResults.noCount ===
+                                                        1
+                                                            ? ''
+                                                            : 's'}
+                                                    </p>
+                                                </>
+                                            ) : (
+                                                <p className='text-(--tg-text-muted)'>
+                                                    No end game votes have been
+                                                    recorded for this round yet.
+                                                </p>
+                                            )}
+                                        </div>
                                     ) : !roundResults ||
                                       roundResults.length === 0 ? (
                                         <p className='text-(--tg-text-muted)'>
@@ -1164,6 +1829,98 @@ const GameManagePage = () => {
                                     )}
                                 </div>
                             ) : null}
+
+                            <section className='mt-4'>
+                                <div className='mb-2 flex items-center justify-between'>
+                                    <h3 className='text-sm font-semibold text-(--tg-gold-soft)'>
+                                        Shield management
+                                    </h3>
+                                    <button
+                                        type='button'
+                                        className='text-[11px] text-(--tg-text-muted) hover:text-(--tg-gold-soft)'
+                                        onClick={() =>
+                                            setShowShieldManager(
+                                                (open) => !open,
+                                            )
+                                        }
+                                    >
+                                        {showShieldManager ? 'Hide' : 'Show'}
+                                    </button>
+                                </div>
+                                <p className='mb-2 text-xs text-(--tg-text-muted)'>
+                                    Manually adjust who currently holds shields.
+                                    At most three players can have an active
+                                    shield at any time. Shields are not
+                                    automatically awarded from minigames – you
+                                    choose who holds them.
+                                </p>
+
+                                {showShieldManager && (
+                                    <div className='rounded-lg border border-[rgba(0,0,0,0.6)] bg-(--tg-surface-muted) px-3 py-2'>
+                                        <div className='mb-2 flex items-center justify-between'>
+                                            <span className='text-xs font-semibold text-(--tg-gold-soft)'>
+                                                Shield holders
+                                            </span>
+                                            <span className='text-[11px] text-(--tg-text-muted)'>
+                                                {
+                                                    shieldPlayers.filter(
+                                                        (p) => p.has_shield,
+                                                    ).length
+                                                }{' '}
+                                                / 3 active
+                                            </span>
+                                        </div>
+                                        {shieldPlayers.length === 0 ? (
+                                            <p className='text-[11px] text-(--tg-text-muted)'>
+                                                No players loaded yet.
+                                            </p>
+                                        ) : (
+                                            <div className='max-h-40 space-y-1 overflow-y-auto pr-1'>
+                                                {shieldPlayers.map((player) => (
+                                                    <div
+                                                        key={player.id}
+                                                        className='flex items-center justify-between gap-2 rounded-md bg-[rgba(0,0,0,0.4)] px-3 py-1.5'
+                                                    >
+                                                        <div>
+                                                            <div className='text-xs font-medium text-(--tg-text)'>
+                                                                {
+                                                                    player.full_name
+                                                                }
+                                                            </div>
+                                                            <div className='text-[10px] text-(--tg-text-muted)'>
+                                                                {player.has_shield
+                                                                    ? 'Currently holds a shield.'
+                                                                    : 'No shield.'}
+                                                            </div>
+                                                        </div>
+                                                        <button
+                                                            type='button'
+                                                            disabled={
+                                                                submitting
+                                                            }
+                                                            onClick={() =>
+                                                                void handleToggleShieldHolder(
+                                                                    player.id,
+                                                                    player.has_shield,
+                                                                )
+                                                            }
+                                                            className={
+                                                                player.has_shield
+                                                                    ? 'inline-flex items-center justify-center rounded-full border border-(--tg-red-soft) px-3 py-1 text-[11px] font-semibold text-(--tg-red-soft) transition hover:bg-[rgba(0,0,0,0.4)] disabled:cursor-not-allowed disabled:opacity-60'
+                                                                    : 'inline-flex items-center justify-center rounded-full border border-(--tg-gold)/60 px-3 py-1 text-[11px] font-semibold text-(--tg-text) transition hover:bg-[rgba(0,0,0,0.4)] disabled:cursor-not-allowed disabled:opacity-60'
+                                                            }
+                                                        >
+                                                            {player.has_shield
+                                                                ? 'Remove shield'
+                                                                : 'Give shield'}
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </section>
                         </section>
                     </div>
                 </div>

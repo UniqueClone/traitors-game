@@ -28,13 +28,22 @@ const VotingPage = () => {
     const router = useRouter();
 
     const [loading, setLoading] = useState(true);
+    const [activeGameId, setActiveGameId] = useState<string | null>(null);
     const [activeRound, setActiveRound] = useState<ActiveRound | null>(null);
     const [players, setPlayers] = useState<Player[]>([]);
     const [selectedPlayerId, setSelectedPlayerId] = useState('');
+    const [endgameChoice, setEndgameChoice] = useState<
+        'all_found' | 'not_all_found' | ''
+    >('');
     const [submitting, setSubmitting] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
     const [votedForName, setVotedForName] = useState<string | null>(null);
     const [roundQuestion, setRoundQuestion] = useState<string | null>(null);
+    const [lastEndgameResult, setLastEndgameResult] = useState<{
+        roundNumber: number | null;
+        yesCount: number;
+        noCount: number;
+    } | null>(null);
 
     useEffect(() => {
         let isMounted = true;
@@ -70,13 +79,17 @@ const VotingPage = () => {
                 }
 
                 if (!activeGame) {
+                    setActiveGameId(null);
                     setActiveRound(null);
                     setPlayers([]);
+                    setLastEndgameResult(null);
                     setMessage(
                         'No active game is currently configured. Please wait for the host to start a game.',
                     );
                     return;
                 }
+
+                setActiveGameId((activeGame as { id: string }).id);
 
                 if (
                     (activeGame as { roles_revealed?: boolean }).roles_revealed
@@ -103,6 +116,7 @@ const VotingPage = () => {
                 if (!membership) {
                     setActiveRound(null);
                     setPlayers([]);
+                    setLastEndgameResult(null);
                     setMessage(
                         'You are not part of the active game. Please complete your player profile for the current game.',
                     );
@@ -114,7 +128,11 @@ const VotingPage = () => {
                     .select('id, round, type, status')
                     .eq('game_id', activeGame.id)
                     .eq('status', RoundStatus.Active)
-                    .in('type', ['banishment_vote', 'killing_vote'])
+                    .in('type', [
+                        'banishment_vote',
+                        'killing_vote',
+                        'endgame_vote',
+                    ])
                     .maybeSingle();
 
                 if (roundError) {
@@ -122,61 +140,129 @@ const VotingPage = () => {
                 }
 
                 if (!round) {
-                    setActiveRound(null);
-                    setPlayers([]);
-                    setRoundQuestion(null);
-                    return;
-                }
-
-                if (!isMounted) return;
-
-                setActiveRound(round as ActiveRound);
-
-                if (round.type === 'killing_vote') {
-                    try {
-                        const storageKey = `tg:killingQuestion:${round.id}`;
-                        const existing =
-                            typeof window !== 'undefined'
-                                ? window.localStorage.getItem(storageKey)
-                                : null;
-
-                        if (existing) {
-                            setRoundQuestion(existing);
-                        } else {
-                            const randomIndex = Math.floor(
-                                Math.random() * KILLING_ROUND_QUESTIONS.length,
-                            );
-                            const question =
-                                KILLING_ROUND_QUESTIONS[randomIndex] ??
-                                KILLING_ROUND_QUESTIONS[0] ??
-                                '';
-                            setRoundQuestion(question || null);
-                            if (
-                                question &&
-                                typeof window !== 'undefined' &&
-                                window.localStorage
-                            ) {
-                                window.localStorage.setItem(
-                                    storageKey,
-                                    question,
-                                );
-                            }
-                        }
-                    } catch (error) {
-                        console.error(
-                            'Error selecting question for killing round',
-                            error,
-                        );
+                    if (isMounted) {
+                        setActiveRound(null);
+                        setPlayers([]);
                         setRoundQuestion(null);
                     }
-                } else {
-                    setRoundQuestion(null);
+                } else if (isMounted) {
+                    setActiveRound(round as ActiveRound);
+
+                    if (round.type === 'killing_vote') {
+                        try {
+                            const storageKey = `tg:killingQuestion:${round.id}`;
+                            const existing =
+                                typeof window !== 'undefined'
+                                    ? window.localStorage.getItem(storageKey)
+                                    : null;
+
+                            if (existing) {
+                                setRoundQuestion(existing);
+                            } else {
+                                const randomIndex = Math.floor(
+                                    Math.random() *
+                                        KILLING_ROUND_QUESTIONS.length,
+                                );
+                                const question =
+                                    KILLING_ROUND_QUESTIONS[randomIndex] ??
+                                    KILLING_ROUND_QUESTIONS[0] ??
+                                    '';
+                                setRoundQuestion(question || null);
+                                if (
+                                    question &&
+                                    typeof window !== 'undefined' &&
+                                    window.localStorage
+                                ) {
+                                    window.localStorage.setItem(
+                                        storageKey,
+                                        question,
+                                    );
+                                }
+                            }
+                        } catch (error) {
+                            console.error(
+                                'Error selecting question for killing round',
+                                error,
+                            );
+                            setRoundQuestion(null);
+                        }
+                    } else {
+                        setRoundQuestion(null);
+                    }
+                }
+
+                // Load the most recent finished endgame vote result so all
+                // players can see the outcome once the host closes it.
+                const { data: latestEndgameRound, error: endgameRoundError } =
+                    await supabase
+                        .from('game_rounds')
+                        .select('id, round, type, status')
+                        .eq('game_id', activeGame.id)
+                        .eq('type', 'endgame_vote')
+                        .order('round', { ascending: false })
+                        .limit(1)
+                        .maybeSingle();
+
+                if (endgameRoundError) {
+                    console.error(
+                        'Error loading latest endgame vote round',
+                        endgameRoundError,
+                    );
+                }
+
+                if (
+                    latestEndgameRound &&
+                    (latestEndgameRound as ActiveRound).status ===
+                        RoundStatus.Ended &&
+                    latestEndgameRound.type === 'endgame_vote'
+                ) {
+                    const { data: endgameVotes, error: endgameVotesError } =
+                        await supabase
+                            .from('endgame_votes')
+                            .select('all_traitors_found')
+                            .eq('round_id', latestEndgameRound.id);
+
+                    if (endgameVotesError) {
+                        console.error(
+                            'Error loading endgame vote results',
+                            endgameVotesError,
+                        );
+                        if (isMounted) {
+                            setLastEndgameResult(null);
+                        }
+                    } else if (isMounted) {
+                        const yesCount =
+                            endgameVotes?.filter(
+                                (vote) => vote.all_traitors_found === true,
+                            ).length ?? 0;
+                        const noCount =
+                            endgameVotes?.filter(
+                                (vote) => vote.all_traitors_found === false,
+                            ).length ?? 0;
+
+                        if (yesCount + noCount > 0) {
+                            setLastEndgameResult({
+                                roundNumber:
+                                    (
+                                        latestEndgameRound as {
+                                            round?: number | null;
+                                        }
+                                    )?.round ?? null,
+                                yesCount,
+                                noCount,
+                            });
+                        } else {
+                            setLastEndgameResult(null);
+                        }
+                    }
+                } else if (isMounted) {
+                    setLastEndgameResult(null);
                 }
 
                 const { data: playersData, error: playersError } =
                     await supabase
                         .from('players')
-                        .select('id, full_name, eliminated')
+                        .select('id, full_name, eliminated, has_shield')
                         .eq('game_id', activeGame.id)
                         .eq('eliminated', false)
                         .neq('id', user.id)
@@ -221,11 +307,6 @@ const VotingPage = () => {
             return;
         }
 
-        if (!selectedPlayerId) {
-            alert('Please select a player before casting your vote.');
-            return;
-        }
-
         setSubmitting(true);
         setMessage(null);
 
@@ -244,6 +325,67 @@ const VotingPage = () => {
 
             if (!user) {
                 router.replace('/login');
+                return;
+            }
+            if (activeRound.type === 'endgame_vote') {
+                if (!activeGameId) {
+                    setMessage('No active game found for this end game vote.');
+                    return;
+                }
+
+                if (!endgameChoice) {
+                    alert('Please choose an option before voting.');
+                    return;
+                }
+
+                const { data: existingEndVote, error: existingEndVoteError } =
+                    await supabase
+                        .from('endgame_votes')
+                        .select('id')
+                        .eq('voter_id', user.id)
+                        .eq('round_id', activeRound.id)
+                        .maybeSingle();
+
+                if (existingEndVoteError) {
+                    console.error(
+                        'Error checking for existing end game vote',
+                        existingEndVoteError,
+                    );
+                }
+
+                if (existingEndVote) {
+                    setMessage(
+                        'Your response for this end game vote has already been recorded.',
+                    );
+                    return;
+                }
+
+                const { error: insertEndError } = await supabase
+                    .from('endgame_votes')
+                    .insert({
+                        game_id: activeGameId,
+                        round_id: activeRound.id,
+                        voter_id: user.id,
+                        all_traitors_found: endgameChoice === 'all_found',
+                    });
+
+                if (insertEndError) {
+                    console.error(
+                        'Error casting end game vote',
+                        insertEndError,
+                    );
+                    alert(
+                        'There was a problem recording your response. Please try again.',
+                    );
+                    return;
+                }
+
+                setMessage('Your response has been recorded.');
+                return;
+            }
+
+            if (!selectedPlayerId) {
+                alert('Please select a player before casting your vote.');
                 return;
             }
 
@@ -307,6 +449,33 @@ const VotingPage = () => {
                 )?.role?.toLowerCase() === 'traitor';
             const isKillRound = activeRound.type === 'killing_vote';
 
+            if (isKillRound) {
+                const { data: targetPlayer, error: targetError } =
+                    await supabase
+                        .from('players')
+                        .select('has_shield')
+                        .eq('id', selectedPlayerId)
+                        .maybeSingle();
+
+                if (targetError) {
+                    console.error(
+                        'Error checking target shield status',
+                        targetError,
+                    );
+                }
+
+                const targetHasShield =
+                    (targetPlayer as { has_shield?: boolean } | null)
+                        ?.has_shield === true;
+
+                if (targetHasShield) {
+                    alert(
+                        'That player currently has a shield and cannot be chosen in this Traitor vote.',
+                    );
+                    return;
+                }
+            }
+
             const voteType = isKillRound && isTraitor ? 'kill' : 'standard';
 
             const { error: insertError } = await supabase.from('votes').insert({
@@ -358,11 +527,46 @@ const VotingPage = () => {
     if (!activeRound) {
         return (
             <div className='flex min-h-screen items-center justify-center bg-(--tg-bg) px-4 py-8'>
-                <div className='w-full max-w-md rounded-2xl border border-[rgba(0,0,0,0.6)] bg-[radial-gradient(circle_at_10%_0%,#24140a_0,#1f1414_40%,#120b0b_100%)] p-px shadow-[0_18px_35px_rgba(0,0,0,0.8)]'>
-                    <div className='rounded-2xl bg-(--tg-surface) px-6 py-6 text-center text-(--tg-text-muted) shadow-[inset_0_0_18px_rgba(0,0,0,0.9)]'>
-                        No voting round is currently active. Please wait for the
-                        host to start the next round.
+                <div className='w-full max-w-md space-y-4'>
+                    <div className='rounded-2xl border border-[rgba(0,0,0,0.6)] bg-[radial-gradient(circle_at_10%_0%,#24140a_0,#1f1414_40%,#120b0b_100%)] p-px shadow-[0_18px_35px_rgba(0,0,0,0.8)]'>
+                        <div className='rounded-2xl bg-(--tg-surface) px-6 py-6 text-center text-(--tg-text-muted) shadow-[inset_0_0_18px_rgba(0,0,0,0.9)]'>
+                            No voting round is currently active. Please wait for
+                            the host to start the next round.
+                        </div>
                     </div>
+
+                    {lastEndgameResult ? (
+                        <div className='rounded-2xl border border-[rgba(0,0,0,0.6)] bg-[radial-gradient(circle_at_10%_0%,#24140a_0,#1f1414_40%,#120b0b_100%)] p-px shadow-[0_18px_35px_rgba(0,0,0,0.8)]'>
+                            <div className='rounded-2xl bg-(--tg-surface) px-6 py-6 text-center shadow-[inset_0_0_18px_rgba(0,0,0,0.9)]'>
+                                <h2 className='mb-1 text-xs font-semibold tracking-[0.35em] text-(--tg-gold-soft)'>
+                                    END GAME VOTE RESULT
+                                </h2>
+                                <p className='mb-3 text-xs text-(--tg-text-muted)'>
+                                    {lastEndgameResult.roundNumber
+                                        ? `Round ${lastEndgameResult.roundNumber}`
+                                        : 'Most recent end game vote'}
+                                </p>
+                                <p className='mb-1 text-sm text-(--tg-text)'>
+                                    All Traitors are found –{' '}
+                                    <span className='font-semibold text-(--tg-gold)'>
+                                        {lastEndgameResult.yesCount}
+                                    </span>{' '}
+                                    vote
+                                    {lastEndgameResult.yesCount === 1
+                                        ? ''
+                                        : 's'}
+                                </p>
+                                <p className='text-sm text-(--tg-text)'>
+                                    Not all Traitors are found –{' '}
+                                    <span className='font-semibold text-(--tg-gold)'>
+                                        {lastEndgameResult.noCount}
+                                    </span>{' '}
+                                    vote
+                                    {lastEndgameResult.noCount === 1 ? '' : 's'}
+                                </p>
+                            </div>
+                        </div>
+                    ) : null}
                 </div>
             </div>
         );
@@ -394,6 +598,8 @@ const VotingPage = () => {
         );
     }
 
+    const isEndgameRound = activeRound.type === 'endgame_vote';
+
     return (
         <div className='flex min-h-screen items-center justify-center bg-(--tg-bg) px-4 py-8'>
             <div className='w-full max-w-md'>
@@ -403,7 +609,7 @@ const VotingPage = () => {
                             THE TRAITORS
                         </h1>
                         <h2 className='mb-1 text-center text-2xl font-semibold text-(--tg-text)'>
-                            Voting round
+                            {isEndgameRound ? 'End game vote' : 'Voting round'}
                         </h2>
                         <p className='mb-1 text-center text-xs text-(--tg-text-muted)'>
                             {`Round ${activeRound.round ?? '—'} · ${(() => {
@@ -434,6 +640,12 @@ const VotingPage = () => {
                                 </span>
                                 Choose one player as your answer.
                             </p>
+                        ) : isEndgameRound ? (
+                            <p className='mb-6 text-center text-sm text-(--tg-text-muted)'>
+                                Do you believe all Traitors have been found? All
+                                living players vote; your host will decide how
+                                to proceed based on the result.
+                            </p>
                         ) : (
                             <p className='mb-6 text-center text-sm text-(--tg-text-muted)'>
                                 Make your choice carefully. Your response will
@@ -442,31 +654,81 @@ const VotingPage = () => {
                         )}
 
                         <form className='space-y-6' onSubmit={handleSubmit}>
-                            <div>
-                                <label className='mb-1 block text-sm font-medium text-(--tg-gold-soft)'>
-                                    Your selection
-                                </label>
-                                <select
-                                    className='w-full rounded-md border border-[rgba(0,0,0,0.6)] bg-[rgba(0,0,0,0.4)] px-3 py-2 text-(--tg-text) shadow-[0_0_0_1px_rgba(255,255,255,0.04)] transition outline-none focus:border-(--tg-gold) focus:shadow-[0_0_0_1px_rgba(212,175,55,0.7)]'
-                                    value={selectedPlayerId}
-                                    onChange={(event) =>
-                                        setSelectedPlayerId(event.target.value)
-                                    }
-                                    required
-                                >
-                                    <option value='' disabled>
-                                        Select a player
-                                    </option>
-                                    {players.map((player) => (
-                                        <option
-                                            key={player.id}
-                                            value={player.id}
+                            {isEndgameRound ? (
+                                <div className='space-y-2'>
+                                    <label className='mb-1 block text-sm font-medium text-(--tg-gold-soft)'>
+                                        Your answer
+                                    </label>
+                                    <div className='flex flex-col gap-2 sm:flex-row'>
+                                        <button
+                                            type='button'
+                                            disabled={submitting}
+                                            onClick={() =>
+                                                setEndgameChoice('all_found')
+                                            }
+                                            className={`flex-1 rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                                                endgameChoice === 'all_found'
+                                                    ? 'border-(--tg-gold) bg-(--tg-gold) text-(--tg-bg) shadow-md'
+                                                    : 'border-(--tg-gold)/60 text-(--tg-text) hover:bg-[rgba(0,0,0,0.4)]'
+                                            }`}
                                         >
-                                            {player.full_name}
+                                            All traitors are found
+                                        </button>
+                                        <button
+                                            type='button'
+                                            disabled={submitting}
+                                            onClick={() =>
+                                                setEndgameChoice(
+                                                    'not_all_found',
+                                                )
+                                            }
+                                            className={`flex-1 rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                                                endgameChoice ===
+                                                'not_all_found'
+                                                    ? 'border-(--tg-gold) bg-(--tg-gold) text-(--tg-bg) shadow-md'
+                                                    : 'border-(--tg-gold)/60 text-(--tg-text) hover:bg-[rgba(0,0,0,0.4)]'
+                                            }`}
+                                        >
+                                            Not all traitors are found
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div>
+                                    <label className='mb-1 block text-sm font-medium text-(--tg-gold-soft)'>
+                                        Your selection
+                                    </label>
+                                    <select
+                                        className='w-full rounded-md border border-[rgba(0,0,0,0.6)] bg-[rgba(0,0,0,0.4)] px-3 py-2 text-(--tg-text) shadow-[0_0_0_1px_rgba(255,255,255,0.04)] transition outline-none focus:border-(--tg-gold) focus:shadow-[0_0_0_1px_rgba(212,175,55,0.7)]'
+                                        value={selectedPlayerId}
+                                        onChange={(event) =>
+                                            setSelectedPlayerId(
+                                                event.target.value,
+                                            )
+                                        }
+                                        required
+                                    >
+                                        <option value='' disabled>
+                                            Select a player
                                         </option>
-                                    ))}
-                                </select>
-                            </div>
+                                        {players
+                                            .filter((player) =>
+                                                activeRound.type ===
+                                                'killing_vote'
+                                                    ? !player.has_shield
+                                                    : true,
+                                            )
+                                            .map((player) => (
+                                                <option
+                                                    key={player.id}
+                                                    value={player.id}
+                                                >
+                                                    {player.full_name}
+                                                </option>
+                                            ))}
+                                    </select>
+                                </div>
+                            )}
 
                             <button
                                 type='submit'

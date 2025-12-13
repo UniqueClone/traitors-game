@@ -10,7 +10,8 @@ export type RoundType =
     | 'banishment_result'
     | 'killing_vote'
     | 'breakfast'
-    | 'minigame';
+    | 'minigame'
+    | 'endgame_vote';
 
 export enum GameStatus {
     Draft = 'draft',
@@ -30,6 +31,7 @@ export interface Game {
     last_revealed_round?: number | null;
     kitchen_signal_version?: number | null;
     minigame_signal_version?: number | null;
+    shield_points_threshold?: number | null;
 }
 
 export interface GameRound {
@@ -48,4 +50,6 @@ export interface Player {
     headshot_url?: string | null;
     role?: string | null;
     game_id?: string;
+    has_shield?: boolean | null;
+    shield_winner?: boolean | null;
 }
