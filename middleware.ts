@@ -13,9 +13,9 @@ export async function middleware(request: NextRequest) {
 
     const isProtectedRoute =
         pathname.startsWith('/login/new-player') ||
-        pathname.startsWith('/player-wall') ||
         pathname.startsWith('/voting') ||
-        pathname.startsWith('/host');
+        pathname.startsWith('/host') ||
+        pathname.startsWith('/profile');
 
     if (!user && isProtectedRoute) {
         const redirectUrl = request.nextUrl.clone();
@@ -26,7 +26,7 @@ export async function middleware(request: NextRequest) {
     // If already logged in, sending them back to login is not useful
     if (user && pathname === '/login') {
         const redirectUrl = request.nextUrl.clone();
-        redirectUrl.pathname = '/player-wall';
+        redirectUrl.pathname = '/profile';
         return NextResponse.redirect(redirectUrl);
     }
 
@@ -36,8 +36,8 @@ export async function middleware(request: NextRequest) {
 export const config = {
     matcher: [
         '/login/:path*',
-        '/player-wall/:path*',
         '/voting/:path*',
         '/host/:path*',
+        '/profile/:path*',
     ],
 };

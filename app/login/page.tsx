@@ -10,6 +10,7 @@ const LoginPage = () => {
     const router = useRouter();
 
     const [username, setUsername] = useState('');
+    const [fullName, setFullName] = useState('');
     const [password, setPassword] = useState('');
 
     const handleLogin = async (
@@ -29,6 +30,8 @@ const LoginPage = () => {
                 alert('Error with auth: ' + error.message);
             } else if (!user) {
                 alert('Login failed: no user returned.');
+            } else {
+                router.push('/profile');
             }
         } catch (error) {
             console.error('error', error);
@@ -40,8 +43,8 @@ const LoginPage = () => {
     };
 
     const handleSignup = async () => {
-        if (!username || !password) {
-            alert('Please enter email and password first.');
+        if (!fullName || !username || !password) {
+            alert('Please enter your name, email, and password first.');
             return;
         }
 
@@ -61,13 +64,58 @@ const LoginPage = () => {
 
             if (!user) {
                 alert(
-                    'Signup successful, confirmation mail should be sent soon! After confirming, please complete your profile.',
+                    'Signup successful, but no user session was returned. Please check your email for confirmation and then try again.',
                 );
-            } else {
-                // User created and (if email confirmation disabled) signed in
+                return;
             }
 
-            router.push('/login/new-player');
+            // Ensure there is a single active game to join
+            const { data: activeGame, error: activeGameError } = await supabase
+                .from('games')
+                .select('id, status')
+                .eq('status', 'active')
+                .maybeSingle();
+
+            if (activeGameError) {
+                console.error('Error loading active game', activeGameError);
+            }
+
+            if (!activeGame) {
+                alert(
+                    'No active game is currently configured. Please ask the host to start a game before signing up.',
+                );
+                return;
+            }
+
+            // Save the player name into auth metadata (optional)
+            const { error: updateError } = await supabase.auth.updateUser({
+                data: {
+                    full_name: fullName,
+                },
+            });
+
+            if (updateError) {
+                console.error('Error saving profile metadata', updateError);
+            }
+
+            // Create the player row for this game; headshots are no longer used
+            const { error: playersError } = await supabase
+                .from('players')
+                .upsert({
+                    id: user.id,
+                    game_id: activeGame.id,
+                    full_name: fullName,
+                    headshot_url: '',
+                    eliminated: false,
+                });
+
+            if (playersError) {
+                console.error('Error saving player record', playersError);
+                alert('Error saving player record: ' + playersError.message);
+                return;
+            }
+
+            router.push('/profile');
         } catch (error) {
             console.error('error', error);
             alert(
@@ -97,6 +145,22 @@ const LoginPage = () => {
                                 void handleLogin(username, password);
                             }}
                         >
+                            <div>
+                                <label className='mb-1 block text-sm font-medium text-(--tg-gold-soft)'>
+                                    Your name
+                                </label>
+                                <input
+                                    type='text'
+                                    className='w-full rounded-md border border-[rgba(0,0,0,0.6)] bg-[rgba(0,0,0,0.4)] px-3 py-2 text-(--tg-text) shadow-[0_0_0_1px_rgba(255,255,255,0.04)] transition outline-none focus:border-(--tg-gold) focus:shadow-[0_0_0_1px_rgba(212,175,55,0.7)]'
+                                    placeholder='Full name for the game'
+                                    value={fullName}
+                                    onChange={(e) =>
+                                        setFullName(e.target.value)
+                                    }
+                                    required
+                                />
+                            </div>
+
                             <div>
                                 <label className='mb-1 block text-sm font-medium text-(--tg-gold-soft)'>
                                     Email

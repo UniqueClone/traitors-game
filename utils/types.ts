@@ -23,9 +23,11 @@ export interface Game {
     id: string;
     name: string;
     status: GameStatus;
-    current_round_number: number | null;
+    cur_round_number: number | null;
     created_at: string | null;
     host: string | null;
+    roles_revealed?: boolean | null;
+    last_revealed_round?: number | null;
 }
 
 export interface GameRound {

@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 
 import BackArrowIcon from '@/app/components/BackArrowIcon';
 import { createClient } from '@/utils/supabase/client';
-import { Game, GameRound, RoundStatus, RoundType } from '@/utils/types';
+import { Game, GameRound, RoundStatus } from '@/utils/types';
 
 const GameManagePage = () => {
     const [supabase] = useState(() => createClient());
@@ -33,8 +33,6 @@ const GameManagePage = () => {
     );
     const [resultsLoading, setResultsLoading] = useState(false);
     const [resultsError, setResultsError] = useState<string | null>(null);
-
-    const [newRoundType, setNewRoundType] = useState<RoundType>('round_table');
 
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [notHostMessage, setNotHostMessage] = useState<string | null>(null);
@@ -78,7 +76,7 @@ const GameManagePage = () => {
                 const { data: gameData, error: gameError } = await supabase
                     .from('games')
                     .select(
-                        'id, name, status, current_round_number, created_at, host',
+                        'id, name, status, cur_round_number, created_at, host, last_revealed_round',
                     )
                     .eq('id', gameId)
                     .maybeSingle();
@@ -150,40 +148,21 @@ const GameManagePage = () => {
         setRounds((data ?? []) as GameRound[]);
     };
 
-    const handleCreateRound = async (event: React.FormEvent) => {
-        event.preventDefault();
+    const endActiveRounds = async (gameIdToUse: string) => {
+        const { error } = await supabase
+            .from('game_rounds')
+            .update({ status: RoundStatus.Ended })
+            .eq('game_id', gameIdToUse)
+            .eq('status', RoundStatus.Active);
 
-        if (!game || !currentUserId || game.host !== currentUserId) {
-            return;
-        }
-
-        setSubmitting(true);
-        setErrorMessage(null);
-
-        try {
-            const { error } = await supabase.from('game_rounds').insert({
-                game_id: game.id,
-                round: nextRoundNumber,
-                type: newRoundType,
-                status: 'pending',
-            });
-
-            if (error) {
-                console.error('Error creating round', error);
-                setErrorMessage('Error creating new round.');
-                return;
-            }
-
-            await refreshRounds();
-        } catch (error) {
-            console.error('Unexpected error creating round', error);
-            setErrorMessage('Unexpected error creating new round.');
-        } finally {
-            setSubmitting(false);
+        if (error) {
+            console.error('Error closing existing active rounds', error);
+            setErrorMessage('Error closing existing active rounds.');
+            throw error;
         }
     };
 
-    const handleSetRoundActive = async (round: GameRound) => {
+    const startRound = async (type: 'banishment_vote' | 'killing_vote') => {
         if (!game || !currentUserId || game.host !== currentUserId) {
             return;
         }
@@ -193,43 +172,38 @@ const GameManagePage = () => {
 
         try {
             // Close any currently active rounds for this game
-            const { error: closeError } = await supabase
-                .from('game_rounds')
-                .update({ status: RoundStatus.Ended })
-                .eq('game_id', game.id)
-                .eq('status', RoundStatus.Active)
-                .neq('id', round.id);
+            await endActiveRounds(game.id);
 
-            if (closeError) {
-                console.error(
-                    'Error closing existing active rounds',
-                    closeError,
-                );
-                setErrorMessage('Error closing other active rounds.');
+            // Create a fresh active round
+            const { data: inserted, error: insertError } = await supabase
+                .from('game_rounds')
+                .insert({
+                    game_id: game.id,
+                    round: nextRoundNumber,
+                    type,
+                    status: RoundStatus.Active,
+                })
+                .select('round')
+                .single();
+
+            if (insertError) {
+                console.error('Error starting round', insertError);
+                setErrorMessage('Error starting new round.');
                 return;
             }
 
-            // Set this round as active
-            const { error: activateError } = await supabase
-                .from('game_rounds')
-                .update({ status: RoundStatus.Active })
-                .eq('id', round.id);
-
-            if (activateError) {
-                console.error('Error setting round active', activateError);
-                setErrorMessage('Error setting round active.');
-                return;
-            }
-
-            // Optionally update current_round_number on the game
+            // Update cur_round_number on the game (used to nudge players
+            // to the voting page at the start of a new round)
             const { error: gameUpdateError } = await supabase
                 .from('games')
-                .update({ current_round_number: round.round ?? null })
+                .update({
+                    cur_round_number: inserted?.round ?? null,
+                })
                 .eq('id', game.id);
 
             if (gameUpdateError) {
                 console.error(
-                    'Error updating game current_round_number',
+                    'Error updating game cur_round_number',
                     gameUpdateError,
                 );
                 // Non-fatal; keep going
@@ -237,8 +211,70 @@ const GameManagePage = () => {
 
             await refreshRounds();
         } catch (error) {
-            console.error('Unexpected error setting round active', error);
-            setErrorMessage('Unexpected error setting round active.');
+            console.error('Unexpected error starting round', error);
+            if (!errorMessage) {
+                setErrorMessage('Unexpected error starting round.');
+            }
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleRevealResultsToPlayers = async () => {
+        if (!game || !currentUserId || game.host !== currentUserId) {
+            return;
+        }
+
+        setSubmitting(true);
+        setErrorMessage(null);
+
+        try {
+            const { data: latestEndedRound, error: roundError } = await supabase
+                .from('game_rounds')
+                .select('id, round, type, status')
+                .eq('game_id', game.id)
+                .in('type', ['banishment_vote', 'killing_vote'])
+                .eq('status', RoundStatus.Ended)
+                .order('round', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+            if (roundError) {
+                console.error(
+                    'Error loading latest ended round for reveal',
+                    roundError,
+                );
+                setErrorMessage('Error loading latest ended round.');
+                return;
+            }
+
+            if (!latestEndedRound) {
+                setErrorMessage(
+                    'There is no completed voting round to reveal yet.',
+                );
+                return;
+            }
+
+            const { error: updateError } = await supabase
+                .from('games')
+                .update({
+                    last_revealed_round:
+                        (latestEndedRound as { round?: number | null }).round ??
+                        null,
+                })
+                .eq('id', game.id);
+
+            if (updateError) {
+                console.error(
+                    'Error updating last_revealed_round',
+                    updateError,
+                );
+                setErrorMessage('Error marking round as revealed to players.');
+                return;
+            }
+        } catch (error) {
+            console.error('Unexpected error marking results revealed', error);
+            setErrorMessage('Unexpected error marking results revealed.');
         } finally {
             setSubmitting(false);
         }
@@ -268,6 +304,107 @@ const GameManagePage = () => {
         } catch (error) {
             console.error('Unexpected error closing round', error);
             setErrorMessage('Unexpected error closing round.');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleStartBanishmentVote = async () => {
+        await startRound('banishment_vote');
+    };
+
+    const handleStartTraitorVote = async () => {
+        await startRound('killing_vote');
+    };
+
+    const handleAssignAndRevealRoles = async () => {
+        if (!game || !currentUserId || game.host !== currentUserId) {
+            return;
+        }
+
+        setSubmitting(true);
+        setErrorMessage(null);
+
+        try {
+            const { data: players, error: playersError } = await supabase
+                .from('players')
+                .select('id, eliminated')
+                .eq('game_id', game.id)
+                .eq('eliminated', false);
+
+            if (playersError) {
+                console.error(
+                    'Error loading players for role assignment',
+                    playersError,
+                );
+                setErrorMessage('Error loading players for role assignment.');
+                return;
+            }
+
+            const activePlayers = (players ?? []) as {
+                id: string;
+                eliminated: boolean;
+            }[];
+
+            if (!activePlayers.length) {
+                setErrorMessage('No active players to assign roles to.');
+                return;
+            }
+
+            const total = activePlayers.length;
+            const traitorCount = Math.min(3, total);
+
+            const shuffled = [...activePlayers].sort(() => Math.random() - 0.5);
+            const traitors = shuffled.slice(0, traitorCount).map((p) => p.id);
+
+            const faithfulIds = shuffled.slice(traitorCount).map((p) => p.id);
+
+            if (traitors.length) {
+                const { error: traitorError } = await supabase
+                    .from('players')
+                    .update({ role: 'traitor' })
+                    .in('id', traitors)
+                    .eq('game_id', game.id);
+
+                if (traitorError) {
+                    console.error('Error setting traitor roles', traitorError);
+                    setErrorMessage('Error setting traitor roles.');
+                    return;
+                }
+            }
+
+            if (faithfulIds.length) {
+                const { error: faithfulError } = await supabase
+                    .from('players')
+                    .update({ role: 'faithful' })
+                    .in('id', faithfulIds)
+                    .eq('game_id', game.id);
+
+                if (faithfulError) {
+                    console.error(
+                        'Error setting faithful roles',
+                        faithfulError,
+                    );
+                    setErrorMessage('Error setting faithful roles.');
+                    return;
+                }
+            }
+
+            const { error: revealError } = await supabase
+                .from('games')
+                .update({ roles_revealed: true })
+                .eq('id', game.id);
+
+            if (revealError) {
+                console.error(
+                    'Error marking roles revealed on game',
+                    revealError,
+                );
+                // Non-fatal for role assignment; players can still see roles.
+            }
+        } catch (error) {
+            console.error('Unexpected error assigning roles', error);
+            setErrorMessage('Unexpected error assigning roles.');
         } finally {
             setSubmitting(false);
         }
@@ -359,16 +496,20 @@ const GameManagePage = () => {
         setResultsError(null);
 
         try {
+            console.log('Eliminating player from results:', playerId);
             const { error } = await supabase
                 .from('players')
                 .update({ eliminated: true })
-                .eq('id', playerId);
+                .eq('id', playerId)
+                .eq('game_id', game.id);
 
             if (error) {
                 console.error('Error eliminating player from results', error);
                 setResultsError('Error eliminating player.');
                 return;
             }
+
+            console.log('Player eliminated successfully:', playerId);
 
             setRoundResults((prev) =>
                 (prev ?? []).map((entry) =>
@@ -447,8 +588,8 @@ const GameManagePage = () => {
                         </h2>
                         <p className='mb-4 text-center text-sm text-(--tg-text-muted)'>
                             {game.name} · Status: {game.status}
-                            {typeof game.current_round_number === 'number'
-                                ? ` · Current round: ${game.current_round_number}`
+                            {typeof game.cur_round_number === 'number'
+                                ? ` · Current round: ${game.cur_round_number}`
                                 : ''}
                         </p>
 
@@ -458,67 +599,69 @@ const GameManagePage = () => {
                             </p>
                         ) : null}
 
-                        <section className='mb-2 sm:mb-4'>
+                        <section className='mb-4'>
                             <h3 className='mb-3 text-sm font-semibold text-(--tg-gold-soft)'>
-                                Rounds
+                                Live controls
                             </h3>
-                            <form
-                                className='mb-4 flex flex-col gap-3 sm:flex-row sm:items-center'
-                                onSubmit={handleCreateRound}
-                            >
-                                <div className='flex-1'>
-                                    <label className='mb-1 block text-xs font-medium text-(--tg-text-muted)'>
-                                        New round type
-                                    </label>
-
-                                    <div className='flex flex-col flex-wrap items-start gap-3'>
-                                        <span className='rounded-full bg-(--tg-surface-muted) px-3 py-1 text-xs text-(--tg-text-muted)'>
-                                            {`Round ${nextRoundNumber} – ${newRoundType.replace(/_/g, ' ')}`}
-                                        </span>
-
-                                        <select
-                                            className='flex-1 rounded-md border border-[rgba(0,0,0,0.6)] bg-[rgba(0,0,0,0.4)] px-3 py-1.5 text-xs text-(--tg-text) shadow-[0_0_0_1px_rgba(255,255,255,0.04)] transition outline-none focus:border-(--tg-gold) focus:shadow-[0_0_0_1px_rgba(212,175,55,0.7)]'
-                                            value={newRoundType}
-                                            onChange={(event) =>
-                                                setNewRoundType(
-                                                    event.target
-                                                        .value as RoundType,
-                                                )
-                                            }
-                                        >
-                                            <option value='round_table'>
-                                                Round table
-                                            </option>
-                                            <option value='banishment_vote'>
-                                                Banishment vote
-                                            </option>
-                                            <option value='banishment_result'>
-                                                Banishment result
-                                            </option>
-                                            <option value='killing_vote'>
-                                                Killing vote
-                                            </option>
-                                            <option value='breakfast'>
-                                                Breakfast
-                                            </option>
-                                            <option value='minigame'>
-                                                Minigame
-                                            </option>
-                                        </select>
-                                    </div>
-                                </div>
-
+                            <p className='mb-3 text-xs text-(--tg-text-muted)'>
+                                Use these buttons during the game to start or
+                                stop voting rounds and reveal roles.
+                            </p>
+                            <div className='mb-4 flex flex-wrap gap-2'>
                                 <button
-                                    type='submit'
+                                    type='button'
                                     disabled={submitting}
+                                    onClick={() =>
+                                        void handleStartBanishmentVote()
+                                    }
                                     className='inline-flex items-center justify-center rounded-full bg-(--tg-gold) px-4 py-2 text-xs font-semibold text-(--tg-bg) shadow-md transition hover:bg-(--tg-gold-soft) active:translate-y-px active:scale-[0.98] active:bg-(--tg-red-soft) disabled:cursor-not-allowed disabled:opacity-60'
                                 >
-                                    Add round
+                                    Start banishment vote
                                 </button>
-                            </form>
+                                <button
+                                    type='button'
+                                    disabled={submitting}
+                                    onClick={() =>
+                                        void handleStartTraitorVote()
+                                    }
+                                    className='inline-flex items-center justify-center rounded-full border border-(--tg-gold) px-4 py-2 text-xs font-semibold text-(--tg-gold-soft) transition hover:bg-[rgba(0,0,0,0.4)] active:translate-y-px active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60'
+                                >
+                                    Start traitor vote
+                                </button>
+                                <button
+                                    type='button'
+                                    disabled={submitting}
+                                    onClick={() =>
+                                        void endActiveRounds(game.id)
+                                    }
+                                    className='inline-flex items-center justify-center rounded-full border border-(--tg-red-soft) px-4 py-2 text-xs font-semibold text-(--tg-red-soft) transition hover:bg-[rgba(0,0,0,0.4)] active:translate-y-px active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60'
+                                >
+                                    Close current round
+                                </button>
+                                <button
+                                    type='button'
+                                    disabled={submitting}
+                                    onClick={() =>
+                                        void handleAssignAndRevealRoles()
+                                    }
+                                    className='inline-flex items-center justify-center rounded-full border border-(--tg-gold)/60 px-4 py-2 text-xs font-semibold text-(--tg-text) transition hover:bg-[rgba(0,0,0,0.4)] active:translate-y-px active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60'
+                                >
+                                    Assign & reveal roles
+                                </button>
+                                <button
+                                    type='button'
+                                    disabled={submitting}
+                                    onClick={() =>
+                                        void handleRevealResultsToPlayers()
+                                    }
+                                    className='inline-flex items-center justify-center rounded-full border border-(--tg-gold)/60 px-4 py-2 text-xs font-semibold text-(--tg-text) transition hover:bg-[rgba(0,0,0,0.4)] active:translate-y-px active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60'
+                                >
+                                    Reveal latest results to players
+                                </button>
+                            </div>
 
                             <span className='mb-2 block text-xs font-medium text-(--tg-text-muted)'>
-                                Manage rounds for this game:
+                                Recent rounds for this game:
                             </span>
 
                             <div className='max-h-[50vh] space-y-2 overflow-y-auto pr-1'>
@@ -564,22 +707,6 @@ const GameManagePage = () => {
                                                 </div>
                                             </div>
                                             <div className='flex flex-wrap gap-2 pt-1 sm:pt-0'>
-                                                <button
-                                                    type='button'
-                                                    disabled={
-                                                        submitting ||
-                                                        round.status ===
-                                                            RoundStatus.Active
-                                                    }
-                                                    onClick={() =>
-                                                        void handleSetRoundActive(
-                                                            round,
-                                                        )
-                                                    }
-                                                    className='inline-flex items-center justify-center rounded-full border border-(--tg-gold) px-3 py-1 text-[11px] font-semibold text-(--tg-gold-soft) transition hover:bg-[rgba(0,0,0,0.4)] disabled:cursor-not-allowed disabled:opacity-60'
-                                                >
-                                                    Set active
-                                                </button>
                                                 <button
                                                     type='button'
                                                     disabled={

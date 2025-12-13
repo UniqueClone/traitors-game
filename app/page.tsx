@@ -1,10 +1,21 @@
 import Link from 'next/link';
+import { cookies } from 'next/headers';
+
+import { createClient } from '@/utils/supabase/server';
 
 /**
  * Home page of the Traitors Game application.
  * This page has the login and landing content.
  */
-export default function Home() {
+export default async function Home() {
+    const cookieStore = cookies();
+    const supabase = createClient(cookieStore);
+    const {
+        data: { user },
+    } = await supabase.auth.getUser();
+
+    const isLoggedIn = !!user;
+
     return (
         <main className='flex min-h-screen flex-col items-center justify-center bg-(--tg-bg) px-4 py-8'>
             <h1 className='text-center text-4xl font-extrabold tracking-wide text-(--tg-gold)'>
@@ -28,10 +39,10 @@ export default function Home() {
             </p>
 
             <Link
-                href='/login'
+                href={isLoggedIn ? '/profile' : '/login'}
                 className='mt-8 inline-flex items-center rounded-full bg-(--tg-gold) px-6 py-2 text-base font-semibold text-(--tg-bg) shadow-md transition hover:bg-(--tg-gold-soft) active:translate-y-px active:scale-[0.98] active:bg-(--tg-red-soft)'
             >
-                Go to Login
+                {isLoggedIn ? 'Am I a Traitor?' : 'Go to Login'}
             </Link>
         </main>
     );

@@ -100,7 +100,7 @@ const NewPlayerPage = () => {
                 return;
             }
 
-            // Also upsert into players table for the wall
+            // Also upsert into players table for the current game
             const { error: playersError } = await supabase
                 .from('players')
                 .upsert({
@@ -116,8 +116,8 @@ const NewPlayerPage = () => {
                 return;
             }
 
-            // Profile complete – send them to the player wall for now
-            router.push('/player-wall');
+            // Profile complete – send them to voting
+            router.push('/voting');
         } catch (error) {
             console.error('error', error);
             alert(

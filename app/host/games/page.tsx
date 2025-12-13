@@ -20,7 +20,7 @@ const GamesAdminPage = () => {
     const loadGames = async (userId: string) => {
         const { data, error } = await supabase
             .from('games')
-            .select('id, name, status, current_round_number, created_at, host')
+            .select('id, name, status, cur_round_number, created_at, host')
             .order('created_at', { ascending: false });
 
         if (error) {

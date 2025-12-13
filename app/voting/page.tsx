@@ -18,6 +18,7 @@ const VotingPage = () => {
     const [selectedPlayerId, setSelectedPlayerId] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
+    const [votedForName, setVotedForName] = useState<string | null>(null);
 
     useEffect(() => {
         let isMounted = true;
@@ -44,7 +45,7 @@ const VotingPage = () => {
                 const { data: activeGame, error: activeGameError } =
                     await supabase
                         .from('games')
-                        .select('id, status')
+                        .select('id, status, roles_revealed')
                         .eq('status', RoundStatus.Active)
                         .maybeSingle();
 
@@ -58,6 +59,13 @@ const VotingPage = () => {
                     setMessage(
                         'No active game is currently configured. Please wait for the host to start a game.',
                     );
+                    return;
+                }
+
+                if (
+                    (activeGame as { roles_revealed?: boolean }).roles_revealed
+                ) {
+                    router.replace('/profile');
                     return;
                 }
 
@@ -236,7 +244,9 @@ const VotingPage = () => {
             }
 
             const isTraitor =
-                (selfPlayer as { role?: string } | null)?.role === 'Traitor';
+                (
+                    selfPlayer as { role?: string } | null
+                )?.role?.toLowerCase() === 'traitor';
             const isKillRound = activeRound.type === 'killing_vote';
 
             const voteType = isKillRound && isTraitor ? 'kill' : 'standard';
@@ -255,8 +265,18 @@ const VotingPage = () => {
                 );
                 return;
             }
-
-            setMessage('Your response has been recorded.');
+            // For banishment votes, switch to a simple confirmation screen
+            // that only shows the name of the chosen player so the group
+            // can discuss before the count is revealed.
+            if (activeRound.type === 'banishment_vote') {
+                const chosen = players.find(
+                    (player) => player.id === selectedPlayerId,
+                );
+                setVotedForName(chosen?.full_name ?? 'Your chosen player');
+                setMessage(null);
+            } else {
+                setMessage('Your response has been recorded.');
+            }
         } catch (error) {
             console.error('Unexpected error casting vote', error);
             alert(
@@ -284,6 +304,32 @@ const VotingPage = () => {
                     <div className='rounded-2xl bg-(--tg-surface) px-6 py-6 text-center text-(--tg-text-muted) shadow-[inset_0_0_18px_rgba(0,0,0,0.9)]'>
                         No voting round is currently active. Please wait for the
                         host to start the next round.
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (activeRound.type === 'banishment_vote' && votedForName) {
+        return (
+            <div className='flex min-h-screen items-center justify-center bg-(--tg-bg) px-4 py-8'>
+                <div className='w-full max-w-md'>
+                    <div className='rounded-2xl border border-[rgba(0,0,0,0.6)] bg-[radial-gradient(circle_at_10%_0%,#24140a_0,#1f1414_40%,#120b0b_100%)] p-px shadow-[0_18px_35px_rgba(0,0,0,0.8)]'>
+                        <div className='rounded-2xl bg-(--tg-surface) px-8 py-10 text-center shadow-[inset_0_0_18px_rgba(0,0,0,0.9)]'>
+                            <h1 className='mb-3 text-xs font-semibold tracking-[0.4em] text-(--tg-gold-soft)'>
+                                THE TRAITORS
+                            </h1>
+                            <p className='mb-2 text-xs tracking-[0.25em] text-(--tg-text-muted) uppercase'>
+                                You voted for
+                            </p>
+                            <p className='mb-6 text-3xl font-extrabold wrap-break-word text-(--tg-gold) sm:text-4xl'>
+                                {votedForName}
+                            </p>
+                            <p className='text-xs text-(--tg-text-muted)'>
+                                Hold this screen up when it&apos;s your turn to
+                                reveal and explain your choice.
+                            </p>
+                        </div>
                     </div>
                 </div>
             </div>

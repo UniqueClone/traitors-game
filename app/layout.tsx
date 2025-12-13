@@ -2,6 +2,10 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import './globals.css';
 import localFont from 'next/font/local';
+import { cookies } from 'next/headers';
+
+import { createClient } from '@/utils/supabase/server';
+import PhaseWatcher from '@/app/components/PhaseWatcher';
 
 export const traitorsFont = localFont({
     src: '../public/fonts/vladb-yarocut-black.otf',
@@ -12,11 +16,39 @@ export const metadata: Metadata = {
     description: 'Welcome to Traitors!',
 };
 
-export default function RootLayout({
+export default async function RootLayout({
     children,
 }: Readonly<{
     children: React.ReactNode;
 }>) {
+    const cookieStore = cookies();
+    const supabase = createClient(cookieStore);
+    const {
+        data: { user },
+    } = await supabase.auth.getUser();
+
+    const isLoggedIn = !!user;
+
+    let isHost = false;
+
+    if (user) {
+        const { data: hostGame, error: hostError } = await supabase
+            .from('games')
+            .select('id')
+            .eq('host', user.id)
+            .limit(1)
+            .maybeSingle();
+
+        if (hostError) {
+            // Non-fatal; nav will simply omit the host link.
+            console.error('Error checking host games for nav', hostError);
+        }
+
+        if (hostGame) {
+            isHost = true;
+        }
+    }
+
     return (
         <html lang='en'>
             <head>
@@ -26,6 +58,7 @@ export default function RootLayout({
                 />
             </head>
             <body className={traitorsFont.className}>
+                <PhaseWatcher />
                 <header className='sticky top-0 z-50 border-b border-(--tg-gold)/20 bg-(--tg-surface)/80 px-4 py-3 backdrop-blur-sm'>
                     <nav className='mx-auto flex max-w-5xl items-center justify-between gap-4'>
                         <Link
@@ -61,25 +94,46 @@ export default function RootLayout({
                                 >
                                     Home
                                 </Link>
-                                {/* TODO - only show login if not logged in */}
-                                <Link
-                                    href='/login'
-                                    className='block px-4 py-2 transition hover:bg-(--tg-surface-muted) hover:text-(--tg-gold-soft) active:bg-(--tg-red-soft) active:text-(--tg-bg)'
-                                >
-                                    Login
-                                </Link>
-                                <Link
-                                    href='/player-wall'
-                                    className='block px-4 py-2 transition hover:bg-(--tg-surface-muted) hover:text-(--tg-gold-soft) active:bg-(--tg-red-soft) active:text-(--tg-bg)'
-                                >
-                                    Player wall
-                                </Link>
-                                <Link
-                                    href='/host/games'
-                                    className='block px-4 py-2 transition hover:bg-(--tg-surface-muted) hover:text-(--tg-gold-soft) active:bg-(--tg-red-soft) active:text-(--tg-bg)'
-                                >
-                                    Host games
-                                </Link>
+
+                                {!isLoggedIn ? (
+                                    <Link
+                                        href='/login'
+                                        className='block px-4 py-2 transition hover:bg-(--tg-surface-muted) hover:text-(--tg-gold-soft) active:bg-(--tg-red-soft) active:text-(--tg-bg)'
+                                    >
+                                        Login
+                                    </Link>
+                                ) : (
+                                    <>
+                                        <Link
+                                            href='/voting'
+                                            className='block px-4 py-2 transition hover:bg-(--tg-surface-muted) hover:text-(--tg-gold-soft) active:bg-(--tg-red-soft) active:text-(--tg-bg)'
+                                        >
+                                            Voting
+                                        </Link>
+
+                                        {/* <Link
+                                            href='/logout'
+                                            className='block px-4 py-2 transition hover:bg-(--tg-surface-muted) hover:text-(--tg-gold-soft) active:bg-(--tg-red-soft) active:text-(--tg-bg)'
+                                        >
+                                            Logout
+                                        </Link> */}
+
+                                        <Link
+                                            href='/profile'
+                                            className='block px-4 py-2 transition hover:bg-(--tg-surface-muted) hover:text-(--tg-gold-soft) active:bg-(--tg-red-soft) active:text-(--tg-bg)'
+                                        >
+                                            Am I a Traitor?
+                                        </Link>
+                                        {isHost ? (
+                                            <Link
+                                                href='/host/games'
+                                                className='block px-4 py-2 transition hover:bg-(--tg-surface-muted) hover:text-(--tg-gold-soft) active:bg-(--tg-red-soft) active:text-(--tg-bg)'
+                                            >
+                                                Manage Game
+                                            </Link>
+                                        ) : null}
+                                    </>
+                                )}
                             </div>
                         </div>
                     </nav>
