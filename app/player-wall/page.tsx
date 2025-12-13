@@ -63,7 +63,10 @@ export default function PlayerWallPage() {
                         .maybeSingle();
 
                 if (membershipError) {
-                    console.error('Error checking game membership', membershipError);
+                    console.error(
+                        'Error checking game membership',
+                        membershipError,
+                    );
                 }
 
                 if (!membership) {
