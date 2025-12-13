@@ -91,13 +91,6 @@ const VotingPage = () => {
 
                 setActiveGameId((activeGame as { id: string }).id);
 
-                if (
-                    (activeGame as { roles_revealed?: boolean }).roles_revealed
-                ) {
-                    router.replace('/profile');
-                    return;
-                }
-
                 const { data: membership, error: membershipError } =
                     await supabase
                         .from('players')
