@@ -966,88 +966,6 @@ const GameManagePage = () => {
                 );
                 return;
             }
-
-            if (livingTotal <= 4) {
-                // Trigger an "end game?" vote round if none is active yet.
-                const { data: existingEndgameRound, error: roundError } =
-                    await supabase
-                        .from('game_rounds')
-                        .select('id')
-                        .eq('game_id', game.id)
-                        .eq('status', RoundStatus.Active)
-                        .eq('type', 'endgame_vote')
-                        .maybeSingle();
-
-                if (roundError) {
-                    console.error(
-                        'Error checking for existing endgame_vote round',
-                        roundError,
-                    );
-                    setErrorMessage(
-                        'Error checking for an existing end game vote round.',
-                    );
-                    return;
-                }
-
-                if (existingEndgameRound) {
-                    return;
-                }
-
-                try {
-                    await endActiveRounds(game.id);
-                } catch (error) {
-                    console.error(
-                        'Error closing active rounds before starting endgame_vote',
-                        error,
-                    );
-                    setErrorMessage(
-                        'Error closing existing rounds before starting an end game vote.',
-                    );
-                    return;
-                }
-
-                const { data: insertedRound, error: insertError } =
-                    await supabase
-                        .from('game_rounds')
-                        .insert({
-                            game_id: game.id,
-                            round: nextRoundNumber,
-                            type: 'endgame_vote',
-                            status: RoundStatus.Active,
-                        })
-                        .select('round')
-                        .single();
-
-                if (insertError || !insertedRound) {
-                    console.error(
-                        'Error starting endgame_vote round',
-                        insertError,
-                    );
-                    setErrorMessage('Error starting end game vote round.');
-                    return;
-                }
-
-                const newRoundNumber = (
-                    insertedRound as { round?: number | null }
-                ).round;
-
-                const { error: gameRoundUpdateError } = await supabase
-                    .from('games')
-                    .update({
-                        cur_round_number: newRoundNumber ?? null,
-                    })
-                    .eq('id', game.id);
-
-                if (gameRoundUpdateError) {
-                    console.error(
-                        'Error updating game cur_round_number for endgame_vote',
-                        gameRoundUpdateError,
-                    );
-                    // Non-fatal; keep going.
-                }
-
-                await refreshRounds();
-            }
         } catch (error) {
             console.error(
                 'Unexpected error checking end game conditions',
@@ -1434,6 +1352,149 @@ const GameManagePage = () => {
         }
     };
 
+    const handleStartEndgameVote = async () => {
+        if (!game || !currentUserId || game.host !== currentUserId) {
+            return;
+        }
+
+        if (game.status !== GameStatus.Active) {
+            setErrorMessage(
+                'End game vote is only available while the game is active.',
+            );
+            return;
+        }
+
+        setSubmitting(true);
+        setErrorMessage(null);
+
+        try {
+            const { data: playersData, error: playersError } = await supabase
+                .from('players')
+                .select('id, role, eliminated')
+                .eq('game_id', game.id);
+
+            if (playersError) {
+                console.error(
+                    'Error loading players for manual end game vote',
+                    playersError,
+                );
+                setErrorMessage(
+                    'Error loading players when starting an end game vote.',
+                );
+                return;
+            }
+
+            const players = (playersData ?? []) as {
+                id: string;
+                role: string | null;
+                eliminated: boolean;
+            }[];
+
+            const livingPlayers = players.filter(
+                (player) => !player.eliminated,
+            );
+            const livingTotal = livingPlayers.length;
+
+            if (livingTotal > 4) {
+                setErrorMessage(
+                    'End game vote is intended for 4 or fewer remaining players. Eliminate more players first.',
+                );
+                return;
+            }
+
+            const totalTraitors = players.filter(
+                (player) => (player.role ?? '').toLowerCase() === 'traitor',
+            ).length;
+
+            if (totalTraitors === 0) {
+                setErrorMessage(
+                    'Cannot start an end game vote because no Traitors are defined for this game.',
+                );
+                return;
+            }
+
+            const { data: existingEndgameRound, error: roundError } =
+                await supabase
+                    .from('game_rounds')
+                    .select('id')
+                    .eq('game_id', game.id)
+                    .eq('status', RoundStatus.Active)
+                    .eq('type', 'endgame_vote')
+                    .maybeSingle();
+
+            if (roundError) {
+                console.error(
+                    'Error checking for existing endgame_vote round',
+                    roundError,
+                );
+                setErrorMessage(
+                    'Error checking for an existing end game vote round.',
+                );
+                return;
+            }
+
+            if (existingEndgameRound) {
+                setErrorMessage('An end game vote round is already active.');
+                return;
+            }
+
+            try {
+                await endActiveRounds(game.id);
+            } catch (error) {
+                console.error(
+                    'Error closing active rounds before starting endgame_vote',
+                    error,
+                );
+                setErrorMessage(
+                    'Error closing existing rounds before starting an end game vote.',
+                );
+                return;
+            }
+
+            const { data: insertedRound, error: insertError } = await supabase
+                .from('game_rounds')
+                .insert({
+                    game_id: game.id,
+                    round: nextRoundNumber,
+                    type: 'endgame_vote',
+                    status: RoundStatus.Active,
+                })
+                .select('round')
+                .single();
+
+            if (insertError || !insertedRound) {
+                console.error('Error starting endgame_vote round', insertError);
+                setErrorMessage('Error starting end game vote round.');
+                return;
+            }
+
+            const newRoundNumber = (insertedRound as { round?: number | null })
+                .round;
+
+            const { error: gameRoundUpdateError } = await supabase
+                .from('games')
+                .update({
+                    cur_round_number: newRoundNumber ?? null,
+                })
+                .eq('id', game.id);
+
+            if (gameRoundUpdateError) {
+                console.error(
+                    'Error updating game cur_round_number for endgame_vote',
+                    gameRoundUpdateError,
+                );
+                // Non-fatal; keep going.
+            }
+
+            await refreshRounds();
+        } catch (error) {
+            console.error('Unexpected error starting end game vote', error);
+            setErrorMessage('Unexpected error starting end game vote.');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
     if (loading) {
         return (
             <div className='flex min-h-screen items-center justify-center bg-(--tg-bg) px-4 py-8'>
@@ -1596,6 +1657,16 @@ const GameManagePage = () => {
                                     className='inline-flex items-center justify-center rounded-full border border-(--tg-gold)/60 px-4 py-2 text-xs font-semibold text-(--tg-text) transition hover:bg-[rgba(0,0,0,0.4)] active:translate-y-px active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60'
                                 >
                                     Start minigame
+                                </button>
+                                <button
+                                    type='button'
+                                    disabled={submitting}
+                                    onClick={() =>
+                                        void handleStartEndgameVote()
+                                    }
+                                    className='inline-flex items-center justify-center rounded-full border border-(--tg-gold)/60 px-4 py-2 text-xs font-semibold text-(--tg-text) transition hover:bg-[rgba(0,0,0,0.4)] active:translate-y-px active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60'
+                                >
+                                    Start end game vote
                                 </button>
                             </div>
 
