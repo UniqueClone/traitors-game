@@ -105,7 +105,9 @@ const GameManagePage = () => {
 
                 const { data: roundsData, error: roundsError } = await supabase
                     .from('game_rounds')
-                    .select('id, game_id, round, type, status')
+                    .select(
+                        'id, game_id, round, type, status, winning_group_index',
+                    )
                     .eq('game_id', gameId)
                     .order('round', { ascending: true });
 
@@ -135,7 +137,7 @@ const GameManagePage = () => {
 
         const { data, error } = await supabase
             .from('game_rounds')
-            .select('id, game_id, round, type, status')
+            .select('id, game_id, round, type, status, winning_group_index')
             .eq('game_id', gameId)
             .order('round', { ascending: true });
 
@@ -317,6 +319,179 @@ const GameManagePage = () => {
         await startRound('killing_vote');
     };
 
+    const handleStartMinigameRound = async () => {
+        if (!game || !currentUserId || game.host !== currentUserId) {
+            return;
+        }
+
+        // Ask the host how many groups they want and whether
+        // they should be as even as possible or randomly sized.
+        const groupCountInput = window.prompt(
+            'How many groups do you want for this minigame? (2-6)',
+            '2',
+        );
+
+        if (!groupCountInput) {
+            return;
+        }
+
+        const groupCount = Number.parseInt(groupCountInput, 10);
+
+        if (!Number.isFinite(groupCount) || groupCount < 2 || groupCount > 6) {
+            alert('Please enter a number of groups between 2 and 6.');
+            return;
+        }
+
+        const evenInput = window.prompt(
+            'Should groups be as even as possible? (y/n)',
+            'y',
+        );
+
+        if (!evenInput) {
+            return;
+        }
+
+        const makeEven = evenInput.trim().toLowerCase().startsWith('y');
+
+        setSubmitting(true);
+        setErrorMessage(null);
+
+        try {
+            // End any currently active rounds for this game so the
+            // minigame is the only active round.
+            await endActiveRounds(game.id);
+
+            // Create a new minigame round
+            const { data: insertedRound, error: insertError } = await supabase
+                .from('game_rounds')
+                .insert({
+                    game_id: game.id,
+                    round: nextRoundNumber,
+                    type: 'minigame',
+                    status: RoundStatus.Active,
+                })
+                .select('id')
+                .single();
+
+            if (insertError || !insertedRound) {
+                console.error('Error starting minigame round', insertError);
+                setErrorMessage('Error starting minigame round.');
+                return;
+            }
+
+            const roundId = (insertedRound as { id: string }).id;
+
+            // Load all non-eliminated players in this game
+            const { data: playersData, error: playersError } = await supabase
+                .from('players')
+                .select('id')
+                .eq('game_id', game.id)
+                .eq('eliminated', false);
+
+            if (playersError) {
+                console.error(
+                    'Error loading players for minigame grouping',
+                    playersError,
+                );
+                setErrorMessage('Error loading players for minigame.');
+                return;
+            }
+
+            const playerIds = (playersData ?? [])
+                .map((p: { id: string }) => p.id)
+                .filter(Boolean);
+
+            if (!playerIds.length) {
+                setErrorMessage('No active players available for minigame.');
+                return;
+            }
+
+            // Shuffle players for randomised grouping
+            const shuffled = [...playerIds].sort(() => Math.random() - 0.5);
+
+            const groups: string[][] = Array.from(
+                { length: groupCount },
+                () => [],
+            );
+
+            if (makeEven) {
+                // Round-robin assignment to keep groups as even as possible
+                shuffled.forEach((playerId, index) => {
+                    const groupIndex = index % groupCount;
+                    groups[groupIndex]!.push(playerId);
+                });
+            } else {
+                // Randomly sized groups: each player goes into a random group
+                shuffled.forEach((playerId) => {
+                    const groupIndex = Math.floor(Math.random() * groupCount);
+                    groups[groupIndex]!.push(playerId);
+                });
+            }
+
+            // Flatten into insert rows, skipping any empty groups
+            const rowsToInsert: {
+                game_id: string;
+                round_id: string;
+                player_id: string;
+                group_index: number;
+            }[] = [];
+
+            groups.forEach((group, index) => {
+                group.forEach((playerId) => {
+                    rowsToInsert.push({
+                        game_id: game.id,
+                        round_id: roundId,
+                        player_id: playerId,
+                        group_index: index + 1,
+                    });
+                });
+            });
+
+            if (!rowsToInsert.length) {
+                setErrorMessage('Could not assign players to minigame groups.');
+                return;
+            }
+
+            const { error: groupsInsertError } = await supabase
+                .from('minigame_groups')
+                .insert(rowsToInsert);
+
+            if (groupsInsertError) {
+                console.error(
+                    'Error saving minigame group assignments',
+                    groupsInsertError,
+                );
+                setErrorMessage('Error saving minigame group assignments.');
+                return;
+            }
+
+            // Bump the minigame signal so PhaseWatcher sends players
+            // to the minigame screen.
+            const newSignalVersion = (game.minigame_signal_version ?? 0) + 1;
+            const { error: signalError } = await supabase
+                .from('games')
+                .update({ minigame_signal_version: newSignalVersion })
+                .eq('id', game.id);
+
+            if (signalError) {
+                console.error(
+                    'Error updating minigame_signal_version on game',
+                    signalError,
+                );
+                setErrorMessage('Error signalling minigame start to players.');
+                return;
+            }
+
+            setGame({ ...game, minigame_signal_version: newSignalVersion });
+            await refreshRounds();
+        } catch (error) {
+            console.error('Unexpected error starting minigame round', error);
+            setErrorMessage('Unexpected error starting minigame round.');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
     const handleAssignAndRevealRoles = async () => {
         if (!game || !currentUserId || game.host !== currentUserId) {
             return;
@@ -441,6 +616,95 @@ const GameManagePage = () => {
         } catch (error) {
             console.error('Unexpected error sending kitchen signal', error);
             setErrorMessage('Unexpected error sending “go to kitchen” signal.');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleMarkMinigameWinningGroup = async (round: GameRound) => {
+        if (!game || !currentUserId || game.host !== currentUserId) {
+            return;
+        }
+
+        if (round.type !== 'minigame') {
+            return;
+        }
+
+        const input = window.prompt(
+            'Which group number won this minigame round?',
+            round.winning_group_index ? String(round.winning_group_index) : '1',
+        );
+
+        if (!input) {
+            return;
+        }
+
+        const parsed = Number.parseInt(input, 10);
+
+        if (!Number.isFinite(parsed) || parsed < 1) {
+            alert('Please enter a valid group number (1 or higher).');
+            return;
+        }
+
+        setSubmitting(true);
+        setErrorMessage(null);
+
+        try {
+            const { data: existingGroupRows, error: groupCheckError } =
+                await supabase
+                    .from('minigame_groups')
+                    .select('group_index')
+                    .eq('round_id', round.id)
+                    .eq('group_index', parsed)
+                    .limit(1);
+
+            if (groupCheckError) {
+                console.error(
+                    'Error checking minigame group for winning group',
+                    groupCheckError,
+                );
+                setErrorMessage('Error validating winning group for round.');
+                return;
+            }
+
+            if (!existingGroupRows || existingGroupRows.length === 0) {
+                alert(
+                    `No players were assigned to group ${parsed} for this round.`,
+                );
+                return;
+            }
+
+            const { error: updateError } = await supabase
+                .from('game_rounds')
+                .update({
+                    winning_group_index: parsed,
+                    status: RoundStatus.Ended,
+                })
+                .eq('id', round.id);
+
+            if (updateError) {
+                console.error(
+                    'Error updating winning_group_index for round',
+                    updateError,
+                );
+                setErrorMessage('Error saving winning group for round.');
+                return;
+            }
+
+            setRounds((prev) =>
+                (prev ?? []).map((r) =>
+                    r.id === round.id
+                        ? {
+                              ...r,
+                              winning_group_index: parsed,
+                              status: RoundStatus.Ended,
+                          }
+                        : r,
+                ),
+            );
+        } catch (error) {
+            console.error('Unexpected error marking winning group', error);
+            setErrorMessage('Unexpected error marking winning group.');
         } finally {
             setSubmitting(false);
         }
@@ -705,6 +969,16 @@ const GameManagePage = () => {
                                 >
                                     Call everyone to kitchen
                                 </button>
+                                <button
+                                    type='button'
+                                    disabled={submitting}
+                                    onClick={() =>
+                                        void handleStartMinigameRound()
+                                    }
+                                    className='inline-flex items-center justify-center rounded-full border border-(--tg-gold)/60 px-4 py-2 text-xs font-semibold text-(--tg-text) transition hover:bg-[rgba(0,0,0,0.4)] active:translate-y-px active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60'
+                                >
+                                    Start minigame
+                                </button>
                             </div>
 
                             <span className='mb-2 block text-xs font-medium text-(--tg-text-muted)'>
@@ -747,6 +1021,13 @@ const GameManagePage = () => {
                                                         }
                                                     })()}
                                                 </div>
+                                                {round.type === 'minigame' && (
+                                                    <div className='text-[11px] text-(--tg-text-muted)'>
+                                                        Winning group:{' '}
+                                                        {round.winning_group_index ??
+                                                            'Not set'}
+                                                    </div>
+                                                )}
                                                 <div className='text-[11px] text-(--tg-text-muted)'>
                                                     Status:{' '}
                                                     {round.status ??
@@ -770,6 +1051,20 @@ const GameManagePage = () => {
                                                 >
                                                     Close
                                                 </button>
+                                                {round.type === 'minigame' && (
+                                                    <button
+                                                        type='button'
+                                                        disabled={submitting}
+                                                        onClick={() =>
+                                                            void handleMarkMinigameWinningGroup(
+                                                                round,
+                                                            )
+                                                        }
+                                                        className='inline-flex items-center justify-center rounded-full border border-(--tg-gold)/60 px-3 py-1 text-[11px] font-semibold text-(--tg-text) transition hover:bg-[rgba(0,0,0,0.4)] disabled:cursor-not-allowed disabled:opacity-60'
+                                                    >
+                                                        Mark winning group
+                                                    </button>
+                                                )}
                                                 {(round.type ===
                                                     'banishment_vote' ||
                                                     round.type ===

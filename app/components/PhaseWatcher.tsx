@@ -14,6 +14,7 @@ const LAST_ROUND_KEY = 'tg:lastSeenRoundNumber';
 const LAST_REVEALED_ROUND_KEY = 'tg:lastSeenRevealedRoundNumber';
 const LAST_ROLES_REVEALED_KEY = 'tg:lastSeenRolesRevealed';
 const LAST_KITCHEN_SIGNAL_KEY = 'tg:lastSeenKitchenSignalVersion';
+const LAST_MINIGAME_SIGNAL_KEY = 'tg:lastSeenMinigameSignalVersion';
 
 export function PhaseWatcher() {
     const router = useRouter();
@@ -37,7 +38,7 @@ export function PhaseWatcher() {
                     await supabase
                         .from('games')
                         .select(
-                            'id, status, cur_round_number, roles_revealed, last_revealed_round, kitchen_signal_version',
+                            'id, status, cur_round_number, roles_revealed, last_revealed_round, kitchen_signal_version, minigame_signal_version',
                         )
                         .eq('status', 'active')
                         .maybeSingle();
@@ -67,6 +68,9 @@ export function PhaseWatcher() {
                 const kitchenSignalVersion: number | null =
                     (activeGame as { kitchen_signal_version?: number | null })
                         .kitchen_signal_version ?? null;
+                const minigameSignalVersion: number | null =
+                    (activeGame as { minigame_signal_version?: number | null })
+                        .minigame_signal_version ?? null;
 
                 // Use localStorage only in browser
                 const storedRound =
@@ -85,6 +89,10 @@ export function PhaseWatcher() {
                     typeof window !== 'undefined'
                         ? window.localStorage.getItem(LAST_KITCHEN_SIGNAL_KEY)
                         : null;
+                const storedMinigameSignalVersion =
+                    typeof window !== 'undefined'
+                        ? window.localStorage.getItem(LAST_MINIGAME_SIGNAL_KEY)
+                        : null;
 
                 const lastSeenRound = storedRound
                     ? Number.parseInt(storedRound, 10)
@@ -95,6 +103,9 @@ export function PhaseWatcher() {
                 const lastSeenRolesRevealed = storedRolesRevealed === 'true';
                 const lastSeenKitchenSignal = storedKitchenSignalVersion
                     ? Number.parseInt(storedKitchenSignalVersion, 10)
+                    : null;
+                const lastSeenMinigameSignal = storedMinigameSignalVersion
+                    ? Number.parseInt(storedMinigameSignalVersion, 10)
                     : null;
 
                 // 1) Roles revealed → send everyone to profile once
@@ -145,7 +156,24 @@ export function PhaseWatcher() {
                     return;
                 }
 
-                // 4) New kitchen signal version → send to kitchen screen once
+                // 4) New minigame signal version → send to minigame screen once
+                if (
+                    minigameSignalVersion !== null &&
+                    minigameSignalVersion !== lastSeenMinigameSignal
+                ) {
+                    if (typeof window !== 'undefined') {
+                        window.localStorage.setItem(
+                            LAST_MINIGAME_SIGNAL_KEY,
+                            String(minigameSignalVersion),
+                        );
+                    }
+                    if (pathname !== '/minigame') {
+                        router.push('/minigame');
+                    }
+                    return;
+                }
+
+                // 5) New kitchen signal version → send to kitchen screen once
                 if (
                     kitchenSignalVersion !== null &&
                     kitchenSignalVersion !== lastSeenKitchenSignal

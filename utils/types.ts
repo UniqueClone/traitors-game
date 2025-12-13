@@ -29,6 +29,7 @@ export interface Game {
     roles_revealed?: boolean | null;
     last_revealed_round?: number | null;
     kitchen_signal_version?: number | null;
+    minigame_signal_version?: number | null;
 }
 
 export interface GameRound {
@@ -37,6 +38,7 @@ export interface GameRound {
     round: number | null;
     type: RoundType | null;
     status: RoundStatus | null;
+    winning_group_index?: number | null;
 }
 
 export interface Player {
