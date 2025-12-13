@@ -164,8 +164,9 @@ export function PhaseWatcher() {
                     return;
                 }
 
-                // 4) New minigame signal version  send to minigame screen once
-                //    but again, only after we have a stored baseline.
+                // 4) New minigame signal version  always send to minigame
+                //    screen when it changes so every player is shown their
+                //    current group, even if they join mid-minigame.
                 if (
                     minigameSignalVersion !== null &&
                     minigameSignalVersion !== lastSeenMinigameSignal
@@ -176,10 +177,7 @@ export function PhaseWatcher() {
                             String(minigameSignalVersion),
                         );
                     }
-                    if (
-                        lastSeenMinigameSignal !== null &&
-                        pathname !== '/minigame'
-                    ) {
+                    if (pathname !== '/minigame') {
                         router.push('/minigame');
                     }
                     return;

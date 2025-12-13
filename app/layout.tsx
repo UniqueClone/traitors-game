@@ -124,6 +124,14 @@ export default async function RootLayout({
                                         >
                                             Am I a Traitor?
                                         </Link>
+
+                                        <Link
+                                            href='/minigame'
+                                            className='block px-4 py-2 transition hover:bg-(--tg-surface-muted) hover:text-(--tg-gold-soft) active:bg-(--tg-red-soft) active:text-(--tg-bg)'
+                                        >
+                                            What group am I in?
+                                        </Link>
+
                                         {isHost ? (
                                             <Link
                                                 href='/host/games'
