@@ -322,12 +322,45 @@ const VotingPage = () => {
                 router.replace('/login');
                 return;
             }
-            if (activeRound.type === 'endgame_vote') {
-                if (!activeGameId) {
-                    setMessage('No active game found for this end game vote.');
-                    return;
-                }
+            if (!activeGameId) {
+                setMessage(
+                    'No active game is currently associated with your session.',
+                );
+                return;
+            }
 
+            // Ensure the current player is part of this game and not eliminated.
+            const { data: selfPlayer, error: selfError } = await supabase
+                .from('players')
+                .select('role, eliminated')
+                .eq('id', user.id)
+                .eq('game_id', activeGameId)
+                .maybeSingle();
+
+            if (selfError) {
+                console.error(
+                    'Error loading current player state for vote',
+                    selfError,
+                );
+            }
+
+            const isEliminated =
+                (selfPlayer as { eliminated?: boolean } | null)?.eliminated ===
+                true;
+
+            if (!selfPlayer || isEliminated) {
+                setMessage(
+                    'You have been eliminated and cannot vote in this game.',
+                );
+                return;
+            }
+
+            const isTraitor =
+                (
+                    selfPlayer as { role?: string } | null
+                )?.role?.toLowerCase() === 'traitor';
+
+            if (activeRound.type === 'endgame_vote') {
                 if (!endgameChoice) {
                     alert('Please choose an option before voting.');
                     return;
@@ -411,37 +444,6 @@ const VotingPage = () => {
                 );
                 return;
             }
-
-            // Determine if this player is a traitor for kill rounds.
-            // Assumes a `role` column on `players` with values like 'Traitor' | 'Faithful'.
-            const { data: selfPlayer, error: selfError } = await supabase
-                .from('players')
-                .select('role, eliminated')
-                .eq('id', user.id)
-                .maybeSingle();
-
-            if (selfError) {
-                console.error(
-                    'Error loading current player role for vote',
-                    selfError,
-                );
-            }
-
-            const isEliminated =
-                (selfPlayer as { eliminated?: boolean } | null)?.eliminated ===
-                true;
-
-            if (isEliminated) {
-                setMessage(
-                    'You have been eliminated and cannot vote in this round.',
-                );
-                return;
-            }
-
-            const isTraitor =
-                (
-                    selfPlayer as { role?: string } | null
-                )?.role?.toLowerCase() === 'traitor';
             const isKillRound = activeRound.type === 'killing_vote';
 
             if (isKillRound) {
