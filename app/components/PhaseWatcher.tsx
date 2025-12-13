@@ -122,7 +122,10 @@ export function PhaseWatcher() {
                     return;
                 }
 
-                // 2) New active round number → send to voting once
+                // 2) New active round number  send to voting once
+                //    but avoid hijacking first-time logins: if we have never
+                //    stored a round number before, treat the current value as
+                //    the baseline and do not redirect.
                 if (
                     currentRoundNumber !== null &&
                     currentRoundNumber !== lastSeenRound
@@ -133,13 +136,15 @@ export function PhaseWatcher() {
                             String(currentRoundNumber),
                         );
                     }
-                    if (pathname !== '/voting') {
+                    if (lastSeenRound !== null && pathname !== '/voting') {
                         router.push('/voting');
                     }
                     return;
                 }
 
-                // 3) New revealed round → send to reveal page once
+                // 3) New revealed round  send to reveal page once
+                //    same first-login behavior: only redirect if we've seen a
+                //    revealed round before in this browser.
                 if (
                     lastRevealedRound !== null &&
                     lastRevealedRound !== lastSeenRevealedRound
@@ -150,13 +155,17 @@ export function PhaseWatcher() {
                             String(lastRevealedRound),
                         );
                     }
-                    if (pathname !== '/voting/reveal') {
+                    if (
+                        lastSeenRevealedRound !== null &&
+                        pathname !== '/voting/reveal'
+                    ) {
                         router.push('/voting/reveal');
                     }
                     return;
                 }
 
-                // 4) New minigame signal version → send to minigame screen once
+                // 4) New minigame signal version  send to minigame screen once
+                //    but again, only after we have a stored baseline.
                 if (
                     minigameSignalVersion !== null &&
                     minigameSignalVersion !== lastSeenMinigameSignal
@@ -167,13 +176,19 @@ export function PhaseWatcher() {
                             String(minigameSignalVersion),
                         );
                     }
-                    if (pathname !== '/minigame') {
+                    if (
+                        lastSeenMinigameSignal !== null &&
+                        pathname !== '/minigame'
+                    ) {
                         router.push('/minigame');
                     }
                     return;
                 }
 
-                // 5) New kitchen signal version → send to kitchen screen once
+                // 5) New kitchen signal version  send to kitchen screen once
+                //    but DO NOT hijack first-time logins: if there's no stored
+                //    kitchen signal yet, just record the current value and keep
+                //    them on whatever page (e.g. /profile) they navigated to.
                 if (
                     kitchenSignalVersion !== null &&
                     kitchenSignalVersion !== lastSeenKitchenSignal
@@ -184,7 +199,11 @@ export function PhaseWatcher() {
                             String(kitchenSignalVersion),
                         );
                     }
-                    if (pathname !== '/kitchen') {
+
+                    if (
+                        lastSeenKitchenSignal !== null &&
+                        pathname !== '/kitchen'
+                    ) {
                         router.push('/kitchen');
                     }
                 }
