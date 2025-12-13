@@ -120,12 +120,14 @@ const VotingPage = () => {
                     .from('game_rounds')
                     .select('id, round, type, status')
                     .eq('game_id', activeGame.id)
-                    .eq('status', RoundStatus.Active)
+                    .in('status', [RoundStatus.Active, RoundStatus.Pending])
                     .in('type', [
                         'banishment_vote',
                         'killing_vote',
                         'endgame_vote',
                     ])
+                    .order('round', { ascending: false })
+                    .limit(1)
                     .maybeSingle();
 
                 if (roundError) {
