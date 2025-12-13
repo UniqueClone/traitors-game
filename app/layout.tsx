@@ -132,6 +132,13 @@ export default async function RootLayout({
                                             What group am I in?
                                         </Link>
 
+                                        <Link
+                                            href='/voting/reveal'
+                                            className='block px-4 py-2 transition hover:bg-(--tg-surface-muted) hover:text-(--tg-gold-soft) active:bg-(--tg-red-soft) active:text-(--tg-bg)'
+                                        >
+                                            Vote Results
+                                        </Link>
+
                                         {isHost ? (
                                             <Link
                                                 href='/host/games'
