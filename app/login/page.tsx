@@ -61,7 +61,7 @@ const LoginPage = () => {
 
             const candidateName =
                 displayNameHint?.trim() ||
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 ((user.user_metadata as any)?.full_name as
                     | string
                     | undefined

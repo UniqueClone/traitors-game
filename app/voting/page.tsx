@@ -8,6 +8,21 @@ import { GameRound, Player, RoundStatus } from '@/utils/types';
 
 type ActiveRound = Pick<GameRound, 'id' | 'round' | 'type' | 'status'>;
 
+const KILLING_ROUND_QUESTIONS: string[] = [
+    'Who do you trust the least in this group?',
+    'Who would you be most nervous to be left alone with?',
+    'Who do you think is hiding the biggest secret?',
+    'Who would you least like to share a room with tonight?',
+    'Who do you think is playing the most dangerously?',
+    'Who would you choose to remove from the game right now?',
+    'Who do you trust the most in this group?',
+    'Who do you think is the most likely to be a Traitor?',
+    'Who would you want on your team in a high-stakes situation?',
+    'Who do you think has the best poker face?',
+    'Who would you like to get to know better?',
+    'Who would you like to see die next?',
+];
+
 const VotingPage = () => {
     const [supabase] = useState(() => createClient());
     const router = useRouter();
@@ -19,6 +34,7 @@ const VotingPage = () => {
     const [submitting, setSubmitting] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
     const [votedForName, setVotedForName] = useState<string | null>(null);
+    const [roundQuestion, setRoundQuestion] = useState<string | null>(null);
 
     useEffect(() => {
         let isMounted = true;
@@ -108,12 +124,54 @@ const VotingPage = () => {
                 if (!round) {
                     setActiveRound(null);
                     setPlayers([]);
+                    setRoundQuestion(null);
                     return;
                 }
 
                 if (!isMounted) return;
 
                 setActiveRound(round as ActiveRound);
+
+                if (round.type === 'killing_vote') {
+                    try {
+                        const storageKey = `tg:killingQuestion:${round.id}`;
+                        const existing =
+                            typeof window !== 'undefined'
+                                ? window.localStorage.getItem(storageKey)
+                                : null;
+
+                        if (existing) {
+                            setRoundQuestion(existing);
+                        } else {
+                            const randomIndex = Math.floor(
+                                Math.random() * KILLING_ROUND_QUESTIONS.length,
+                            );
+                            const question =
+                                KILLING_ROUND_QUESTIONS[randomIndex] ??
+                                KILLING_ROUND_QUESTIONS[0] ??
+                                '';
+                            setRoundQuestion(question || null);
+                            if (
+                                question &&
+                                typeof window !== 'undefined' &&
+                                window.localStorage
+                            ) {
+                                window.localStorage.setItem(
+                                    storageKey,
+                                    question,
+                                );
+                            }
+                        }
+                    } catch (error) {
+                        console.error(
+                            'Error selecting question for killing round',
+                            error,
+                        );
+                        setRoundQuestion(null);
+                    }
+                } else {
+                    setRoundQuestion(null);
+                }
 
                 const { data: playersData, error: playersError } =
                     await supabase
@@ -367,10 +425,21 @@ const VotingPage = () => {
                                 }
                             })()}`}
                         </p>
-                        <p className='mb-6 text-center text-sm text-(--tg-text-muted)'>
-                            Make your choice carefully. Your response will be
-                            recorded for this round.
-                        </p>
+                        {activeRound.type === 'killing_vote' &&
+                        roundQuestion ? (
+                            <p className='mb-6 text-center text-sm text-(--tg-text-muted)'>
+                                Tonight&apos;s question:{' '}
+                                <span className='block font-semibold text-(--tg-gold-soft)'>
+                                    {roundQuestion}
+                                </span>
+                                Choose one player as your answer.
+                            </p>
+                        ) : (
+                            <p className='mb-6 text-center text-sm text-(--tg-text-muted)'>
+                                Make your choice carefully. Your response will
+                                be recorded for this round.
+                            </p>
+                        )}
 
                         <form className='space-y-6' onSubmit={handleSubmit}>
                             <div>

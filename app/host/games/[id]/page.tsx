@@ -76,7 +76,7 @@ const GameManagePage = () => {
                 const { data: gameData, error: gameError } = await supabase
                     .from('games')
                     .select(
-                        'id, name, status, cur_round_number, created_at, host, last_revealed_round',
+                        'id, name, status, cur_round_number, created_at, host, last_revealed_round, kitchen_signal_version',
                     )
                     .eq('id', gameId)
                     .maybeSingle();
@@ -410,6 +410,42 @@ const GameManagePage = () => {
         }
     };
 
+    const handleCallEveryoneToKitchen = async () => {
+        if (!game || !currentUserId || game.host !== currentUserId) {
+            return;
+        }
+
+        setSubmitting(true);
+        setErrorMessage(null);
+
+        try {
+            const newVersion = (game.kitchen_signal_version ?? 0) + 1;
+
+            const { error: updateError } = await supabase
+                .from('games')
+                .update({ kitchen_signal_version: newVersion })
+                .eq('id', game.id);
+
+            if (updateError) {
+                console.error(
+                    'Error triggering kitchen signal on game',
+                    updateError,
+                );
+                setErrorMessage(
+                    'Error sending “go to kitchen” signal to players.',
+                );
+                return;
+            }
+
+            setGame({ ...game, kitchen_signal_version: newVersion });
+        } catch (error) {
+            console.error('Unexpected error sending kitchen signal', error);
+            setErrorMessage('Unexpected error sending “go to kitchen” signal.');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
     const loadRoundResults = async (round: GameRound) => {
         if (!game || !currentUserId || game.host !== currentUserId) {
             return;
@@ -605,7 +641,8 @@ const GameManagePage = () => {
                             </h3>
                             <p className='mb-3 text-xs text-(--tg-text-muted)'>
                                 Use these buttons during the game to start or
-                                stop voting rounds and reveal roles.
+                                stop voting rounds, send players to the kitchen,
+                                and reveal roles.
                             </p>
                             <div className='mb-4 flex flex-wrap gap-2'>
                                 <button
@@ -657,6 +694,16 @@ const GameManagePage = () => {
                                     className='inline-flex items-center justify-center rounded-full border border-(--tg-gold)/60 px-4 py-2 text-xs font-semibold text-(--tg-text) transition hover:bg-[rgba(0,0,0,0.4)] active:translate-y-px active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60'
                                 >
                                     Reveal latest results to players
+                                </button>
+                                <button
+                                    type='button'
+                                    disabled={submitting}
+                                    onClick={() =>
+                                        void handleCallEveryoneToKitchen()
+                                    }
+                                    className='inline-flex items-center justify-center rounded-full border border-(--tg-gold)/60 px-4 py-2 text-xs font-semibold text-(--tg-text) transition hover:bg-[rgba(0,0,0,0.4)] active:translate-y-px active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60'
+                                >
+                                    Call everyone to kitchen
                                 </button>
                             </div>
 

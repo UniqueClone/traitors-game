@@ -28,6 +28,7 @@ export interface Game {
     host: string | null;
     roles_revealed?: boolean | null;
     last_revealed_round?: number | null;
+    kitchen_signal_version?: number | null;
 }
 
 export interface GameRound {

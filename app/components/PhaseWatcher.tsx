@@ -13,6 +13,7 @@ import { createClient } from '@/utils/supabase/client';
 const LAST_ROUND_KEY = 'tg:lastSeenRoundNumber';
 const LAST_REVEALED_ROUND_KEY = 'tg:lastSeenRevealedRoundNumber';
 const LAST_ROLES_REVEALED_KEY = 'tg:lastSeenRolesRevealed';
+const LAST_KITCHEN_SIGNAL_KEY = 'tg:lastSeenKitchenSignalVersion';
 
 export function PhaseWatcher() {
     const router = useRouter();
@@ -36,7 +37,7 @@ export function PhaseWatcher() {
                     await supabase
                         .from('games')
                         .select(
-                            'id, status, cur_round_number, roles_revealed, last_revealed_round',
+                            'id, status, cur_round_number, roles_revealed, last_revealed_round, kitchen_signal_version',
                         )
                         .eq('status', 'active')
                         .maybeSingle();
@@ -63,6 +64,9 @@ export function PhaseWatcher() {
                     (activeGame as { roles_revealed?: boolean | null })
                         .roles_revealed,
                 );
+                const kitchenSignalVersion: number | null =
+                    (activeGame as { kitchen_signal_version?: number | null })
+                        .kitchen_signal_version ?? null;
 
                 // Use localStorage only in browser
                 const storedRound =
@@ -77,6 +81,10 @@ export function PhaseWatcher() {
                     typeof window !== 'undefined'
                         ? window.localStorage.getItem(LAST_ROLES_REVEALED_KEY)
                         : null;
+                const storedKitchenSignalVersion =
+                    typeof window !== 'undefined'
+                        ? window.localStorage.getItem(LAST_KITCHEN_SIGNAL_KEY)
+                        : null;
 
                 const lastSeenRound = storedRound
                     ? Number.parseInt(storedRound, 10)
@@ -85,6 +93,9 @@ export function PhaseWatcher() {
                     ? Number.parseInt(storedRevealedRound, 10)
                     : null;
                 const lastSeenRolesRevealed = storedRolesRevealed === 'true';
+                const lastSeenKitchenSignal = storedKitchenSignalVersion
+                    ? Number.parseInt(storedKitchenSignalVersion, 10)
+                    : null;
 
                 // 1) Roles revealed → send everyone to profile once
                 if (rolesRevealed && !lastSeenRolesRevealed) {
@@ -130,6 +141,23 @@ export function PhaseWatcher() {
                     }
                     if (pathname !== '/voting/reveal') {
                         router.push('/voting/reveal');
+                    }
+                    return;
+                }
+
+                // 4) New kitchen signal version → send to kitchen screen once
+                if (
+                    kitchenSignalVersion !== null &&
+                    kitchenSignalVersion !== lastSeenKitchenSignal
+                ) {
+                    if (typeof window !== 'undefined') {
+                        window.localStorage.setItem(
+                            LAST_KITCHEN_SIGNAL_KEY,
+                            String(kitchenSignalVersion),
+                        );
+                    }
+                    if (pathname !== '/kitchen') {
+                        router.push('/kitchen');
                     }
                 }
             } catch (error) {

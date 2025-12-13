@@ -15,7 +15,8 @@ export async function middleware(request: NextRequest) {
         pathname.startsWith('/login/new-player') ||
         pathname.startsWith('/voting') ||
         pathname.startsWith('/host') ||
-        pathname.startsWith('/profile');
+        pathname.startsWith('/profile') ||
+        pathname.startsWith('/kitchen');
 
     if (!user && isProtectedRoute) {
         const redirectUrl = request.nextUrl.clone();
@@ -39,5 +40,6 @@ export const config = {
         '/voting/:path*',
         '/host/:path*',
         '/profile/:path*',
+        '/kitchen/:path*',
     ],
 };
