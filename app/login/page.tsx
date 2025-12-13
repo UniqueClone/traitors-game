@@ -13,6 +13,86 @@ const LoginPage = () => {
     const [fullName, setFullName] = useState('');
     const [password, setPassword] = useState('');
 
+    const ensurePlayerForActiveGame = async (
+        user: { id: string; email?: string | null; user_metadata?: unknown },
+        displayNameHint?: string,
+    ) => {
+        try {
+            const { data: activeGame, error: activeGameError } = await supabase
+                .from('games')
+                .select('id, status')
+                .eq('status', 'active')
+                .maybeSingle();
+
+            if (activeGameError) {
+                console.error('Error loading active game', activeGameError);
+                alert(
+                    'There was a problem loading the current game. Please try again or ask your host to check the game setup.',
+                );
+                return;
+            }
+
+            if (!activeGame) {
+                alert(
+                    'No active game is currently available. Please ask your host to create a game and set it active before logging in.',
+                );
+                return;
+            }
+
+            const { data: existingPlayer, error: existingPlayerError } =
+                await supabase
+                    .from('players')
+                    .select('id')
+                    .eq('id', user.id)
+                    .eq('game_id', activeGame.id)
+                    .maybeSingle();
+
+            if (existingPlayerError) {
+                console.error(
+                    'Error checking existing player for active game',
+                    existingPlayerError,
+                );
+                return;
+            }
+
+            if (existingPlayer) {
+                return;
+            }
+
+            const candidateName =
+                displayNameHint?.trim() ||
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
+                ((user.user_metadata as any)?.full_name as
+                    | string
+                    | undefined
+                    | null) ||
+                user.email ||
+                'New player';
+
+            const { error: upsertError } = await supabase
+                .from('players')
+                .upsert({
+                    id: user.id,
+                    game_id: activeGame.id,
+                    full_name: candidateName,
+                    headshot_url: '',
+                    eliminated: false,
+                });
+
+            if (upsertError) {
+                console.error(
+                    'Error creating player for active game',
+                    upsertError,
+                );
+            }
+        } catch (error) {
+            console.error(
+                'Unexpected error ensuring player for active game',
+                error,
+            );
+        }
+    };
+
     const handleLogin = async (
         usernameValue: string,
         passwordValue: string,
@@ -31,6 +111,7 @@ const LoginPage = () => {
             } else if (!user) {
                 alert('Login failed: no user returned.');
             } else {
+                await ensurePlayerForActiveGame(user, fullName);
                 router.push('/profile');
             }
         } catch (error) {
@@ -68,26 +149,6 @@ const LoginPage = () => {
                 );
                 return;
             }
-
-            // Ensure there is a single active game to join
-            const { data: activeGame, error: activeGameError } = await supabase
-                .from('games')
-                .select('id, status')
-                .eq('status', 'active')
-                .maybeSingle();
-
-            if (activeGameError) {
-                console.error('Error loading active game', activeGameError);
-            }
-
-            if (!activeGame) {
-                alert(
-                    'No active game is currently configured. Please ask the host to start a game before signing up.',
-                );
-                return;
-            }
-
-            // Save the player name into auth metadata (optional)
             const { error: updateError } = await supabase.auth.updateUser({
                 data: {
                     full_name: fullName,
@@ -98,24 +159,7 @@ const LoginPage = () => {
                 console.error('Error saving profile metadata', updateError);
             }
 
-            // Create the player row for this game; headshots are no longer used
-            const { error: playersError } = await supabase
-                .from('players')
-                .upsert({
-                    id: user.id,
-                    game_id: activeGame.id,
-                    full_name: fullName,
-                    headshot_url: '',
-                    eliminated: false,
-                });
-
-            if (playersError) {
-                console.error('Error saving player record', playersError);
-                alert('Error saving player record: ' + playersError.message);
-                return;
-            }
-
-            router.push('/profile');
+            await handleLogin(username, password);
         } catch (error) {
             console.error('error', error);
             alert(
