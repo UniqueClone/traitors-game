@@ -17,6 +17,9 @@ const ProfilePage = () => {
     const [hasShield, setHasShield] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const [revealed, setRevealed] = useState(false);
+    const [traitorAllies, setTraitorAllies] = useState<
+        { id: string; full_name: string }[] | null
+    >(null);
 
     useEffect(() => {
         let isMounted = true;
@@ -42,7 +45,7 @@ const ProfilePage = () => {
 
                 const { data: player, error: playerError } = await supabase
                     .from('players')
-                    .select('full_name, role, has_shield')
+                    .select('full_name, role, has_shield, game_id')
                     .eq('id', user.id)
                     .maybeSingle();
 
@@ -70,6 +73,76 @@ const ProfilePage = () => {
                     setHasShield(
                         (player.has_shield as boolean | null) === true,
                     );
+
+                    // If this player is a Traitor in a game where roles
+                    // have been revealed, load the other traitors so they
+                    // can see their allies while viewing their profile.
+                    const normalized = (player.role ?? '')
+                        .toString()
+                        .toLowerCase();
+                    const isTraitor = normalized === 'traitor';
+                    const gameId = (player as { game_id?: string | null })
+                        .game_id;
+
+                    if (isTraitor && gameId) {
+                        try {
+                            const { data: game, error: gameError } =
+                                await supabase
+                                    .from('games')
+                                    .select('roles_revealed')
+                                    .eq('id', gameId)
+                                    .maybeSingle();
+
+                            if (gameError) {
+                                console.error(
+                                    'Error loading game for traitor allies',
+                                    gameError,
+                                );
+                            }
+
+                            const rolesRevealed = Boolean(
+                                (game as { roles_revealed?: boolean | null })
+                                    ?.roles_revealed,
+                            );
+
+                            if (rolesRevealed) {
+                                const { data: allies, error: alliesError } =
+                                    await supabase
+                                        .from('players')
+                                        .select('id, full_name')
+                                        .eq('game_id', gameId)
+                                        .eq('role', 'traitor')
+                                        .neq('id', user.id)
+                                        .order('full_name', {
+                                            ascending: true,
+                                        });
+
+                                if (alliesError) {
+                                    console.error(
+                                        'Error loading fellow traitors',
+                                        alliesError,
+                                    );
+                                } else {
+                                    setTraitorAllies(
+                                        (allies ?? []) as {
+                                            id: string;
+                                            full_name: string;
+                                        }[],
+                                    );
+                                }
+                            } else {
+                                setTraitorAllies(null);
+                            }
+                        } catch (allyError) {
+                            console.error(
+                                'Unexpected error loading traitor allies',
+                                allyError,
+                            );
+                            setTraitorAllies(null);
+                        }
+                    } else {
+                        setTraitorAllies(null);
+                    }
                 }
             } catch (err) {
                 console.error('Unexpected error loading profile', err);
@@ -222,6 +295,29 @@ const ProfilePage = () => {
                                 assign roles when the game begins.
                             </div>
                         )}
+
+                        {isTraitor &&
+                        revealed &&
+                        traitorAllies &&
+                        traitorAllies.length > 0 ? (
+                            <div className='mt-4 rounded-xl border border-(--tg-gold)/40 bg-(--tg-surface-muted) px-4 py-4 text-sm text-(--tg-text)'>
+                                <p className='mb-2 text-[11px] font-semibold tracking-[0.18em] text-(--tg-gold-soft) uppercase'>
+                                    Other traitors
+                                </p>
+                                <ul className='space-y-1 text-sm'>
+                                    {traitorAllies.map((ally) => (
+                                        <li
+                                            key={ally.id}
+                                            className='flex items-center justify-between rounded-md bg-[rgba(0,0,0,0.35)] px-3 py-1.5'
+                                        >
+                                            <span className='font-medium'>
+                                                {ally.full_name}
+                                            </span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        ) : null}
                     </div>
                 </div>
             </div>
