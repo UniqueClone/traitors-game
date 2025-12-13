@@ -1243,10 +1243,20 @@ const GameManagePage = () => {
                 return;
             }
 
-            const { data: votesData, error: votesError } = await supabase
+            // For banishment rounds we count all standard votes.
+            // For killing rounds we only count traitor kill votes.
+            let votesQuery = supabase
                 .from('votes')
                 .select('target_id')
                 .eq('round_id', round.id);
+
+            if (round.type === 'killing_vote') {
+                votesQuery = votesQuery.eq('type', 'kill');
+            } else if (round.type === 'banishment_vote') {
+                votesQuery = votesQuery.eq('type', 'standard');
+            }
+
+            const { data: votesData, error: votesError } = await votesQuery;
 
             if (votesError) {
                 console.error('Error loading votes for round', votesError);
